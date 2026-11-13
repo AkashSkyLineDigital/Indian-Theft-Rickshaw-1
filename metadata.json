@@ -1,0 +1,6 @@
+{
+  "name": "Indian Theft Rickshaw",
+  "description": "3D open-world Indian street action sandbox with auto-rickshaws, dynamic police pursuit, walk-in armory, and offline progression.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
