@@ -18,7 +18,7 @@ interface MinimapProps {
   onExpand?: () => void;
 }
 
-export const Minimap: React.FC<MinimapProps> = ({
+export const Minimap: React.FC<MinimapProps> = React.memo(({
   playerX,
   playerZ,
   playerYaw,
@@ -249,6 +249,25 @@ export const Minimap: React.FC<MinimapProps> = ({
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText('L', bx, by + 0.5);
+      } else if (b.type === 'court') {
+        ctx.fillStyle = '#a855f7';
+        ctx.fillRect(bx - 5, by - 5, 10, 10);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 8px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('⚖', bx, by + 0.5);
+      } else if (b.type === 'jail') {
+        ctx.fillStyle = '#1e293b';
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 1.2;
+        ctx.fillRect(bx - 5, by - 5, 10, 10);
+        ctx.strokeRect(bx - 5, by - 5, 10, 10);
+        ctx.fillStyle = '#fca5a5';
+        ctx.font = 'bold 8px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('J', bx, by + 0.5);
       } else if (b.type === 'chopper') {
         ctx.strokeStyle = '#38bdf8';
         ctx.lineWidth = 1.6;
@@ -375,4 +394,4 @@ export const Minimap: React.FC<MinimapProps> = ({
       </div>
     </button>
   );
-};
+});

@@ -1,4 +1,4 @@
-export type GameMode = 'TITLE' | 'PLAYING' | 'PAUSED' | 'WASTED';
+export type GameMode = 'TITLE' | 'PLAYING' | 'PAUSED' | 'WASTED' | 'BUSTED' | 'COURTROOM' | 'JAIL';
 
 export type WeaponId = 'fists' | 'pistol' | 'smg' | 'shotgun' | 'rifle';
 
@@ -14,6 +14,14 @@ export const MEDKIT_HEAL_AMOUNT = 75;
 export const MAX_MEDKITS = 3;
 export const ARMOR_PRICE_INR = 38000;
 export const BRIBE_PRICE_INR = 50000;
+export const STREET_BRIBE_INR = 3000;
+export const COURT_BAIL_FEE_INR = 2500;
+export const LAWYER_FEE_1_2_INR = 1500;
+export const LAWYER_FEE_3_INR = 3000;
+export const HIGH_BAIL_3_STAR_INR = 18000;
+export const JAIL_WARDEN_BRIBE_LOW_INR = 15000;
+export const JAIL_WARDEN_BRIBE_HIGH_INR = 30000;
+export const JAIL_WORK_WAGE_INR = 2000;
 export const MISSION_TIME_LIMIT_SEC = 20 * 60; // 20 minutes
 export const GUN_LICENSE_FEE_INR = 25000;
 export const DRIVING_LICENSE_FEE_INR = 12000;
@@ -431,6 +439,8 @@ export interface MinimapBlip {
     | 'bank'
     | 'atm'
     | 'dm_office'
+    | 'court'
+    | 'jail'
     | 'chai'
     | 'golgappa'
     | 'temple'
@@ -464,6 +474,7 @@ export interface WorldLabelHud {
   isDealer?: boolean;
   isBanker?: boolean;
   isLicenseOfficer?: boolean;
+  jailStation?: 'BUNK' | 'WORKSHOP' | 'WARDEN' | 'ESCAPE_GATE';
 }
 
 export interface WitnessAlertHud {
@@ -565,6 +576,8 @@ export const CITY_LOCATIONS: CityLocationPreset[] = [
   { id: 'noor-masjid', label: 'Noor Masjid', category: 'sacred', x: -90, z: -18, badge: '☪' },
   { id: 'royal-bank', label: 'Royal Bank Of India', category: 'service', x: -30, z: -74, badge: 'B' },
   { id: 'dm-office', label: 'DM Office (Arms & Driving License)', category: 'service', x: -90, z: 46, badge: 'L' },
+  { id: 'district-court', label: 'District & Sessions Court', category: 'service', x: -90, z: 108, badge: '⚖' },
+  { id: 'central-jail', label: 'Bharat Central Jail', category: 'service', x: -150, z: 178, badge: 'J' },
   { id: 'pankaj-armory', label: 'Pankaj Ammunation', category: 'service', x: 30, z: -14, badge: 'G' },
   { id: 'hospital', label: 'City Hospital', category: 'service', x: -30, z: 14, badge: '+' },
   { id: 'auto-stand', label: 'Chai Chowk Auto Stand', category: 'service', x: 7.5, z: 14, badge: 'A' },
@@ -575,6 +588,60 @@ export const CITY_LOCATIONS: CityLocationPreset[] = [
   { id: 'azad-nagar', label: 'Azad Nagar Colony', category: 'service', x: -210, z: 16, badge: 'R' },
   { id: 'shanti-vihar', label: 'Shanti Vihar Colony', category: 'service', x: 210, z: -16, badge: 'R' },
 ];
+
+export type CourtroomVerdictKind = 'BAILABLE' | 'HIGH_BAIL' | 'NO_BAIL';
+
+export interface CourtroomDialogueTurn {
+  speakerRole: 'judge' | 'inspector' | 'lawyer';
+  speakerName: string;
+  title: string;
+  text: string;
+  tts: string;
+}
+
+export interface CourtroomState {
+  starsAtArrest: number;
+  arrestReason: string;
+  charges: string[];
+  confiscated: string[];
+  verdictKind: CourtroomVerdictKind;
+  verdictHeadline: string;
+  bailAmount: number;
+  lawyerFee: number;
+  totalDue: number;
+  jailDays: number;
+  dialogueIndex: number;
+  dialogueTurns: CourtroomDialogueTurn[];
+  argumentsFinished: boolean;
+}
+
+export interface JailGuardBlip {
+  x: number;
+  z: number;
+  yaw: number;
+  alerted: boolean;
+}
+
+export interface JailHudState {
+  active: boolean;
+  starsAtArrest: number;
+  sentenceDaysTotal: number;
+  remainingDays: number;
+  remainingHoursLabel: string;
+  wardenBribeCost: number;
+  workCount: number;
+  workRewardTotal: number;
+  escrowedWeaponsCount: number;
+  activeTaskKind: 'NONE' | 'WORK' | 'ESCAPE';
+  activeTaskPct: number;
+  spottedByGuard: boolean;
+  nearStation: 'BUNK' | 'WORKSHOP' | 'WARDEN' | 'ESCAPE_GATE' | null;
+  statusBanner: string | null;
+  playerX: number;
+  playerZ: number;
+  playerYaw: number;
+  guards: JailGuardBlip[];
+}
 
 export interface HudSnapshot {
   hp: number;
@@ -590,6 +657,7 @@ export interface HudSnapshot {
   helmetOn: boolean;
   wantedLevel: number;
   wantedTierTitle: string;
+  wantedNextHint: string | null;
   wantedCooldownPct: number;
   activeWeapon: WeaponId;
   ownedWeapons: WeaponId[];
@@ -621,6 +689,11 @@ export interface HudSnapshot {
   npcSubtitle: { speaker: string; text: string } | null;
   policeWarning: string | null;
   wastedReason: string;
+  bustedReason: string;
+  bustedConfiscated: string[];
+  policeNonLethalArrest: boolean;
+  surrenderHoldPct: number;
+  streetBribe: { available: boolean; officerName: string; amount: number } | null;
   kills: number;
   blips: MinimapBlip[];
   damagedNpcs: DamagedNpcHud[];
@@ -632,4 +705,6 @@ export interface HudSnapshot {
   blessedTotalSec: number;
   prayerAnim: PrayerAnimHud | null;
   bank: BankAccountHudState;
+  courtroom: CourtroomState | null;
+  jail: JailHudState | null;
 }

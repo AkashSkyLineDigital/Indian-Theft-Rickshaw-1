@@ -81,9 +81,13 @@ export const CityMapModal: React.FC<CityMapModalProps> = ({
                         ? '#192b1d'
                         : bx === 90 && bz === 90
                           ? '#261a38'
-                          : isColony
-                            ? '#161e2b'
-                            : '#1b2230';
+                          : bx === -90 && bz === 90
+                            ? '#241736'
+                            : bx === -150 && bz === 150
+                              ? '#29161a'
+                              : isColony
+                                ? '#161e2b'
+                                : '#1b2230';
         ctx.strokeStyle = '#2d3748';
         ctx.lineWidth = 1;
         ctx.fillRect(cx - bw / 2, cy - bw / 2, bw, bw);
@@ -261,6 +265,25 @@ export const CityMapModal: React.FC<CityMapModalProps> = ({
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText('L', bx, by + 0.5);
+      } else if (b.type === 'court') {
+        ctx.fillStyle = '#a855f7';
+        ctx.fillRect(bx - 7, by - 7, 14, 14);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('⚖', bx, by + 0.5);
+      } else if (b.type === 'jail') {
+        ctx.fillStyle = '#1e293b';
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 1.5;
+        ctx.fillRect(bx - 7, by - 7, 14, 14);
+        ctx.strokeRect(bx - 7, by - 7, 14, 14);
+        ctx.fillStyle = '#fca5a5';
+        ctx.font = 'bold 10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('J', bx, by + 0.5);
       } else if (b.type === 'chopper') {
         ctx.strokeStyle = '#38bdf8';
         ctx.lineWidth = 2;
@@ -474,15 +497,17 @@ export const CityMapModal: React.FC<CityMapModalProps> = ({
                       <div className="flex items-center gap-2 min-w-0">
                         <span
                           className={`w-5 h-5 shrink-0 flex items-center justify-center text-[10px] font-bold ${
-                            loc.id === 'dm-office'
+                            loc.id === 'dm-office' || loc.id === 'district-court'
                               ? 'bg-purple-600 text-white'
-                              : loc.category === 'sacred'
-                                ? loc.id === 'noor-masjid'
-                                  ? 'bg-emerald-600 text-white'
-                                  : 'bg-orange-500 text-white'
-                                : loc.category === 'service'
-                                  ? 'bg-sky-500 text-[#0B0E14]'
-                                  : 'bg-amber-500 text-[#0B0E14]'
+                              : loc.id === 'central-jail'
+                                ? 'bg-red-700 text-white'
+                                : loc.category === 'sacred'
+                                  ? loc.id === 'noor-masjid'
+                                    ? 'bg-emerald-600 text-white'
+                                    : 'bg-orange-500 text-white'
+                                  : loc.category === 'service'
+                                    ? 'bg-sky-500 text-[#0B0E14]'
+                                    : 'bg-amber-500 text-[#0B0E14]'
                           }`}
                         >
                           {loc.badge}

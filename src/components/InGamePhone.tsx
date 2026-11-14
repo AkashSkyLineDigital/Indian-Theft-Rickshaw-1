@@ -27,6 +27,7 @@ import {
   MAX_MEDKITS,
   MicHudState,
   PoliceInspectionHud,
+  STREET_BRIBE_INR,
   WaypointHudState,
   formatRs,
 } from '../types/game';
@@ -65,6 +66,9 @@ interface InGamePhoneProps {
   onOpenWheel: () => void;
   onEnterExitVehicle: () => void;
   onBribePolice: () => void;
+  streetBribe?: { available: boolean; officerName: string; amount: number } | null;
+  onOfferStreetBribe?: () => void;
+  onSurrender?: () => void;
   onApplyCheat: (code: string) => { ok: boolean; message: string };
   onClose: () => void;
 }
@@ -105,6 +109,9 @@ export const InGamePhone: React.FC<InGamePhoneProps> = ({
   onOpenWheel,
   onEnterExitVehicle,
   onBribePolice,
+  streetBribe,
+  onOfferStreetBribe,
+  onSurrender,
   onApplyCheat,
   onClose,
 }) => {
@@ -386,14 +393,38 @@ export const InGamePhone: React.FC<InGamePhoneProps> = ({
               <span className="text-[11px] font-semibold">Dial Cheats</span>
             </button>
 
-            <button
-              type="button"
-              onClick={onBribePolice}
-              className="flex flex-col items-center justify-center gap-1 p-2.5 bg-[#141A26] hover:bg-[#1E2638] border border-slate-700/80 text-slate-100 cursor-pointer transition-colors"
-            >
-              <ShieldAlert className="w-4 h-4 text-red-400" />
-              <span className="text-[11px] font-semibold">Bribe ({formatRs(BRIBE_PRICE_INR)})</span>
-            </button>
+            {streetBribe?.available && onOfferStreetBribe ? (
+              <button
+                type="button"
+                onClick={onOfferStreetBribe}
+                className="flex flex-col items-center justify-center gap-1 p-2.5 bg-amber-950/75 hover:bg-amber-900/80 border border-amber-400/80 text-amber-200 cursor-pointer transition-colors"
+              >
+                <ShieldAlert className="w-4 h-4 text-amber-300" />
+                <span className="text-[11px] font-semibold">
+                  Chai-Paani ({formatRs(STREET_BRIBE_INR)})
+                </span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onBribePolice}
+                className="flex flex-col items-center justify-center gap-1 p-2.5 bg-[#141A26] hover:bg-[#1E2638] border border-slate-700/80 text-slate-100 cursor-pointer transition-colors"
+              >
+                <ShieldAlert className="w-4 h-4 text-red-400" />
+                <span className="text-[11px] font-semibold">Bribe ({formatRs(BRIBE_PRICE_INR)})</span>
+              </button>
+            )}
+
+            {wantedLevel >= 1 && onSurrender && (
+              <button
+                type="button"
+                onClick={onSurrender}
+                className="col-span-2 flex items-center justify-center gap-2 p-2 bg-sky-900/75 hover:bg-sky-800 border border-sky-400/80 text-sky-100 cursor-pointer transition-colors"
+              >
+                <ShieldAlert className="w-4 h-4 text-sky-300" />
+                <span className="text-[11px] font-semibold">Surrender to Police (Hold H)</span>
+              </button>
+            )}
 
             <button
               type="button"

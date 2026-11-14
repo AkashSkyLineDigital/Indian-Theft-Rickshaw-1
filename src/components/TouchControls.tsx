@@ -42,6 +42,10 @@ interface TouchControlsProps {
   onOpenWheel: () => void;
   onOpenPhone: () => void;
   onOpenSettings: () => void;
+  canSurrender?: boolean;
+  canStreetBribe?: boolean;
+  onSurrender?: () => void;
+  onOfferStreetBribe?: () => void;
 }
 
 export const TouchControls: React.FC<TouchControlsProps> = ({
@@ -71,6 +75,10 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   onOpenWheel,
   onOpenPhone,
   onOpenSettings,
+  canSurrender,
+  canStreetBribe,
+  onSurrender,
+  onOfferStreetBribe,
 }) => {
   const padRef = useRef<HTMLDivElement | null>(null);
   const [knob, setKnob] = useState({ x: 0, y: 0 });
@@ -180,6 +188,24 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
       {/* Right-Side Touch Action Cluster */}
       <div className="absolute bottom-24 right-5 flex flex-col items-end gap-3 pointer-events-auto">
         <div className="flex items-center gap-2 flex-wrap justify-end">
+          {canStreetBribe && onOfferStreetBribe && (
+            <button
+              type="button"
+              onClick={onOfferStreetBribe}
+              className="px-3 h-11 rounded-full bg-amber-500 border border-[#0B0E14] flex items-center justify-center text-[#0B0E14] text-[11px] font-bold active:scale-95 shadow-lg"
+            >
+              BRIBE ₹3K
+            </button>
+          )}
+          {canSurrender && onSurrender && (
+            <button
+              type="button"
+              onClick={onSurrender}
+              className="px-3 h-11 rounded-full bg-sky-600 border border-sky-200 flex items-center justify-center text-white text-[11px] font-bold active:scale-95 shadow-lg"
+            >
+              SURRENDER
+            </button>
+          )}
           {contextLabel && (
             <button
               type="button"

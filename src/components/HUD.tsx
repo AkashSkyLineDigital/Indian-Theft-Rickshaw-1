@@ -62,6 +62,8 @@ interface HUDProps {
   onToggleHelmet: () => void;
   onContextInteract: () => void;
   onClearWaypoint: () => void;
+  onOfferStreetBribe: () => void;
+  onSurrender: () => void;
 }
 
 function formatTimer(sec: number): string {
@@ -94,6 +96,8 @@ export const HUD: React.FC<HUDProps> = ({
   onToggleHelmet,
   onContextInteract,
   onClearWaypoint,
+  onOfferStreetBribe,
+  onSurrender,
 }) => {
   const activeSpec = WEAPONS[hud.activeWeapon];
   const hpPct = Math.max(0, Math.min(100, (hud.hp / hud.maxHp) * 100));
@@ -441,8 +445,41 @@ export const HUD: React.FC<HUDProps> = ({
           )}
 
           {hud.policeWarning && (
-            <div className="px-3 py-1.5 bg-red-950/90 border border-red-500/60 text-xs font-medium text-red-200 max-w-xs">
-              {hud.policeWarning}
+            <div className="pointer-events-auto px-3 py-2 bg-red-950/92 border border-red-500/70 text-xs font-medium text-red-100 max-w-xs flex flex-col gap-1.5">
+              <span>{hud.policeWarning}</span>
+              {hud.wantedLevel >= 1 && (
+                <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={onSurrender}
+                    className="px-2 py-1 bg-sky-700 hover:bg-sky-600 text-white text-[10px] font-mono-num font-bold cursor-pointer"
+                  >
+                    [Hold H] Surrender
+                  </button>
+                  {hud.streetBribe?.available && (
+                    <button
+                      type="button"
+                      onClick={onOfferStreetBribe}
+                      className="px-2 py-1 bg-amber-500 hover:bg-amber-400 text-[#0B0E14] text-[10px] font-mono-num font-bold cursor-pointer"
+                    >
+                      [B] Chai-Paani {formatRs(hud.streetBribe.amount)}
+                    </button>
+                  )}
+                </div>
+              )}
+              {hud.surrenderHoldPct > 0 && (
+                <div className="flex flex-col gap-0.5 pt-0.5">
+                  <span className="text-[10px] font-mono-num text-sky-300 font-bold">
+                    SURRENDERING... {hud.surrenderHoldPct}%
+                  </span>
+                  <div className="w-full h-1.5 bg-slate-900 overflow-hidden">
+                    <div
+                      className="h-full bg-sky-400 transition-all duration-75"
+                      style={{ width: `${hud.surrenderHoldPct}%` }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -572,8 +609,13 @@ export const HUD: React.FC<HUDProps> = ({
                   ))}
                 </div>
                 {hud.wantedLevel > 0 && hud.wantedTierTitle && (
-                  <span className="text-[10px] font-mono-num font-bold text-red-300">
+                  <span className="text-[10px] font-mono-num font-bold text-red-300 text-right">
                     {hud.wantedTierTitle}
+                  </span>
+                )}
+                {hud.wantedLevel > 0 && hud.wantedNextHint && (
+                  <span className="text-[9px] font-mono-num text-amber-200/90 text-right leading-tight max-w-[165px]">
+                    {hud.wantedNextHint}
                   </span>
                 )}
               </div>

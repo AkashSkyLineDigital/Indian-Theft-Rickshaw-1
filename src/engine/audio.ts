@@ -602,6 +602,65 @@ class SoundEngine {
     osc.stop(now + 0.9);
   }
 
+  public playCourtGavel(): void {
+    const ctx = this.ensureContext();
+    const vol = this.effectiveSfxGain();
+    if (!ctx || vol <= 0.01) return;
+    const now = ctx.currentTime;
+    [0, 0.19].forEach((offset) => {
+      const t = now + offset;
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(240, t);
+      osc.frequency.exponentialRampToValueAtTime(72, t + 0.11);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.55 * vol, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.15);
+    });
+  }
+
+  public playJailDoorClang(): void {
+    const ctx = this.ensureContext();
+    const vol = this.effectiveSfxGain();
+    if (!ctx || vol <= 0.01) return;
+    const now = ctx.currentTime;
+    [185, 292, 430].forEach((freq) => {
+      const osc = ctx.createOscillator();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(freq, now);
+      osc.frequency.exponentialRampToValueAtTime(freq * 0.68, now + 0.36);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.16 * vol, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.4);
+    });
+  }
+
+  public playLockpickClick(): void {
+    const ctx = this.ensureContext();
+    const vol = this.effectiveSfxGain();
+    if (!ctx || vol <= 0.01) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(1450, now);
+    osc.frequency.exponentialRampToValueAtTime(620, now + 0.045);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.22 * vol, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.055);
+    osc.connect(g);
+    g.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.06);
+  }
+
   public playJump(): void {
     const ctx = this.ensureContext();
     const vol = this.effectiveSfxGain();
@@ -912,13 +971,13 @@ class SoundEngine {
    * retro Web Audio synth cadence so NPCs ALWAYS speak reliably.
    */
   public speakNpcLine(
-    role: 'officer' | 'enforcer' | 'dealer' | 'citizen' | 'banker' | 'narrator',
+    role: 'officer' | 'enforcer' | 'dealer' | 'citizen' | 'banker' | 'narrator' | 'judge' | 'lawyer' | 'warden',
     seedId: number,
     textOrDevanagari: string,
   ): void {
-    if (role === 'officer' && !this.settings.policeVoiceEnabled) return;
+    if ((role === 'officer' || role === 'warden') && !this.settings.policeVoiceEnabled) return;
     if ((role === 'citizen' || role === 'enforcer' || role === 'dealer') && !this.settings.npcVoiceEnabled) return;
-    if ((role === 'banker' || role === 'narrator') && !this.settings.gameVoiceEnabled) return;
+    if ((role === 'banker' || role === 'narrator' || role === 'judge' || role === 'lawyer') && !this.settings.gameVoiceEnabled) return;
 
     const hash = Math.abs(seedId * 2654435761) >>> 0;
     let rate = 0.96;
@@ -926,11 +985,21 @@ class SoundEngine {
     let blipFreq = 260;
     let blipWave: OscillatorType = 'square';
 
-    if (role === 'officer') {
+    if (role === 'officer' || role === 'warden') {
       rate = 0.84;
       pitch = 0.84;
       blipFreq = 165;
       blipWave = 'triangle';
+    } else if (role === 'judge') {
+      rate = 0.88;
+      pitch = 0.78;
+      blipFreq = 148;
+      blipWave = 'triangle';
+    } else if (role === 'lawyer') {
+      rate = 1.02;
+      pitch = 1.04;
+      blipFreq = 290;
+      blipWave = 'sine';
     } else if (role === 'banker') {
       rate = 0.94;
       pitch = 1.02;

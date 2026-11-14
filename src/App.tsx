@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AtmModal } from './components/AtmModal';
 import { BankModal } from './components/BankModal';
+import { BustedOverlay } from './components/BustedOverlay';
 import { CityMapModal } from './components/CityMapModal';
+import { CourtroomOverlay } from './components/CourtroomOverlay';
 import { GunShopModal } from './components/GunShopModal';
 import { HUD } from './components/HUD';
 import { InGamePhone } from './components/InGamePhone';
+import { JailHudOverlay } from './components/JailHudOverlay';
 import { LicenseOfficeModal } from './components/LicenseOfficeModal';
 import { SettingsModal } from './components/SettingsModal';
 import { ShopConfirmModal } from './components/ShopConfirmModal';
@@ -53,6 +56,7 @@ const INITIAL_HUD: HudSnapshot = {
   cash: STARTING_CASH_INR,
   wantedLevel: 0,
   wantedTierTitle: '',
+  wantedNextHint: null,
   wantedCooldownPct: 0,
   hasGunLicense: false,
   hasDrivingLicense: false,
@@ -93,6 +97,11 @@ const INITIAL_HUD: HudSnapshot = {
   npcSubtitle: null,
   policeWarning: null,
   wastedReason: '',
+  bustedReason: '',
+  bustedConfiscated: [],
+  policeNonLethalArrest: false,
+  surrenderHoldPct: 0,
+  streetBribe: null,
   kills: 0,
   blips: [],
   damagedNpcs: [],
@@ -134,6 +143,8 @@ const INITIAL_HUD: HudSnapshot = {
     calendarDate: formatInGameDate(1),
     passbook: [],
   },
+  courtroom: null,
+  jail: null,
 };
 
 export default function App() {
@@ -329,6 +340,10 @@ export default function App() {
       }
       if (e.code === 'KeyB') {
         if (mode === 'PLAYING' && !shopOpen && !confirmGunId) {
+          if (engineRef.current?.isStreetBribeAvailable()) {
+            engineRef.current.offerStreetBribe();
+            return;
+          }
           handleOpenShop();
         } else if (shopOpen) {
           setShopOpen(false);
@@ -364,7 +379,7 @@ export default function App() {
   };
 
   const handleResumeFromSettings = () => {
-    engineRef.current?.setMode('PLAYING');
+    engineRef.current?.setMode(hud.jail?.active ? 'JAIL' : 'PLAYING');
   };
 
   const handleCloseShop = () => {
@@ -417,7 +432,7 @@ export default function App() {
   };
 
   const showTouchHud =
-    mode === 'PLAYING' &&
+    (mode === 'PLAYING' || mode === 'JAIL') &&
     hud.mission.phase !== 'CUTSCENE' &&
     !wheelOpen &&
     !phoneOpen &&
@@ -515,44 +530,56 @@ export default function App() {
           onToggleHelmet={() => engineRef.current?.toggleHelmet()}
           onContextInteract={() => engineRef.current?.triggerContextAction()}
           onClearWaypoint={() => engineRef.current?.clearWaypoint()}
+          onOfferStreetBribe={() => engineRef.current?.offerStreetBribe()}
+          onSurrender={() => engineRef.current?.triggerManualSurrender()}
         />
       )}
 
       {!engineError && showTouchHud && (
         <TouchControls
-          inVehicle={hud.inVehicle}
-          canUseMedkit={hud.medkits > 0 && hud.hp < hud.maxHp}
-          micListening={hud.micState.active}
+          inVehicle={mode === 'PLAYING' && hud.inVehicle}
+          canUseMedkit={mode === 'PLAYING' && hud.medkits > 0 && hud.hp < hud.maxHp}
+          micListening={mode === 'PLAYING' && hud.micState.active}
           firstPerson={hud.firstPerson}
-          adsActive={hud.adsActive}
-          canAds={hud.activeWeapon !== 'fists'}
-          hasHelmet={hud.hasHelmet}
-          helmetOn={hud.helmetOn}
-          isBike={hud.currentVehicleKind === 'bike'}
+          adsActive={mode === 'PLAYING' && hud.adsActive}
+          canAds={mode === 'PLAYING' && hud.activeWeapon !== 'fists'}
+          hasHelmet={mode === 'PLAYING' && hud.hasHelmet}
+          helmetOn={mode === 'PLAYING' && hud.helmetOn}
+          isBike={mode === 'PLAYING' && hud.currentVehicleKind === 'bike'}
           contextLabel={
-            hud.policeInspection?.phase === 'ASKING'
-              ? 'LICENSE'
-              : hud.nearRescueVan
-                ? 'OPEN VAN'
-                : hud.nearDogAction === 'pet'
-                  ? 'PET DOG'
-                  : hud.nearDogAction === 'sit'
-                    ? 'SIT DOG'
-                    : hud.nearDogAction === 'follow'
-                      ? 'CALL DOG'
-                      : hud.nearAtm
-                        ? 'ATM'
-                        : hud.nearStall
-                          ? 'ORDER'
-                          : hud.nearSacredPlace
-                            ? hud.nearSacredPlace.kind === 'mosque'
-                              ? 'DUA'
-                              : 'DARSHAN'
-                            : hud.nearLicenseOffice
-                              ? 'LICENSE'
-                              : hud.nearBank
-                                ? 'BANK'
-                                : null
+            mode === 'JAIL'
+              ? hud.jail?.nearStation === 'BUNK'
+                ? 'SKIP SAZA'
+                : hud.jail?.nearStation === 'WORKSHOP'
+                  ? 'JAIL WORK'
+                  : hud.jail?.nearStation === 'WARDEN'
+                    ? 'WARDEN'
+                    : hud.jail?.nearStation === 'ESCAPE_GATE'
+                      ? 'ESCAPE'
+                      : null
+              : hud.policeInspection?.phase === 'ASKING'
+                ? 'LICENSE'
+                : hud.nearRescueVan
+                  ? 'OPEN VAN'
+                  : hud.nearDogAction === 'pet'
+                    ? 'PET DOG'
+                    : hud.nearDogAction === 'sit'
+                      ? 'SIT DOG'
+                      : hud.nearDogAction === 'follow'
+                        ? 'CALL DOG'
+                        : hud.nearAtm
+                          ? 'ATM'
+                          : hud.nearStall
+                            ? 'ORDER'
+                            : hud.nearSacredPlace
+                              ? hud.nearSacredPlace.kind === 'mosque'
+                                ? 'DUA'
+                                : 'DARSHAN'
+                              : hud.nearLicenseOffice
+                                ? 'LICENSE'
+                                : hud.nearBank
+                                  ? 'BANK'
+                                  : null
           }
           onMove={(x, y) => engineRef.current?.setTouchMove(x, y)}
           onSprint={(active) => engineRef.current?.setTouchSprint(active)}
@@ -569,11 +596,16 @@ export default function App() {
           onOpenMap={handleToggleMap}
           onOpenWheel={() => engineRef.current?.setWeaponWheelOpen(true)}
           onOpenPhone={() => {
+            if (mode !== 'PLAYING') return;
             engineRef.current?.releasePointerLock();
             setMapOpen(false);
             setPhoneOpen(true);
           }}
           onOpenSettings={handleOpenSettings}
+          canSurrender={mode === 'PLAYING' && hud.wantedLevel >= 1}
+          canStreetBribe={mode === 'PLAYING' && Boolean(hud.streetBribe?.available)}
+          onSurrender={() => engineRef.current?.triggerManualSurrender()}
+          onOfferStreetBribe={() => engineRef.current?.offerStreetBribe()}
         />
       )}
 
@@ -643,6 +675,15 @@ export default function App() {
             engineRef.current?.triggerEnterExit();
           }}
           onBribePolice={() => engineRef.current?.bribePolice()}
+          streetBribe={hud.streetBribe}
+          onOfferStreetBribe={() => {
+            setPhoneOpen(false);
+            engineRef.current?.offerStreetBribe();
+          }}
+          onSurrender={() => {
+            setPhoneOpen(false);
+            engineRef.current?.triggerManualSurrender();
+          }}
           onApplyCheat={(code) =>
             engineRef.current?.applyCheat(code) ?? { ok: false, message: 'Engine not ready' }
           }
@@ -776,6 +817,45 @@ export default function App() {
           kills={hud.kills}
           cash={hud.cash}
           onRespawn={() => engineRef.current?.respawnAtHospital()}
+        />
+      )}
+
+      {!engineError && mode === 'BUSTED' && (
+        <BustedOverlay
+          reason={hud.bustedReason}
+          confiscated={hud.bustedConfiscated}
+          hasGunLicense={hud.hasGunLicense}
+          cash={hud.cash}
+          onRespawn={() => engineRef.current?.respawnAtThana()}
+        />
+      )}
+
+      {!engineError && mode === 'COURTROOM' && hud.courtroom && (
+        <CourtroomOverlay
+          courtroom={hud.courtroom}
+          cash={hud.cash}
+          bankSavings={hud.bank.savingsTotal}
+          onAdvanceDialogue={() => engineRef.current?.advanceCourtroomDialogue()}
+          onSkipArguments={() => engineRef.current?.skipCourtroomArguments()}
+          onPayBail={(source) => engineRef.current?.payCourtroomBail(source)}
+          onEnterJail={() => engineRef.current?.enterCentralJailFromCourt()}
+        />
+      )}
+
+      {!engineError && mode === 'JAIL' && hud.jail && (
+        <JailHudOverlay
+          jail={hud.jail}
+          cash={hud.cash}
+          bankSavings={hud.bank.savingsTotal}
+          timeOfDay={hud.timeOfDay}
+          toasts={toasts}
+          worldLabels={hud.worldLabels}
+          isTouchHud={showTouchHud}
+          onSkipSentence={() => engineRef.current?.jailSkipSentence()}
+          onPerformWork={() => engineRef.current?.jailPerformWork()}
+          onBribeWarden={(source) => engineRef.current?.jailBribeWarden(source)}
+          onStartPrisonBreak={() => engineRef.current?.jailStartPrisonBreak()}
+          onOpenSettings={handleOpenSettings}
         />
       )}
     </div>

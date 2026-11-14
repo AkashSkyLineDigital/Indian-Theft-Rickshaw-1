@@ -8,6 +8,10 @@ import {
   BRIBE_PRICE_INR,
   BankAccountHudState,
   CHOWK_ROUNDABOUTS,
+  COURT_BAIL_FEE_INR,
+  CourtroomDialogueTurn,
+  CourtroomState,
+  CourtroomVerdictKind,
   DAYS_PER_YEAR,
   DEATH_FEE_INR,
   DEFAULT_SETTINGS,
@@ -19,7 +23,14 @@ import {
   GameMode,
   GameSettings,
   HELMET_PRICE_INR,
+  HIGH_BAIL_3_STAR_INR,
   HudSnapshot,
+  JAIL_WARDEN_BRIBE_HIGH_INR,
+  JAIL_WARDEN_BRIBE_LOW_INR,
+  JAIL_WORK_WAGE_INR,
+  JailHudState,
+  LAWYER_FEE_1_2_INR,
+  LAWYER_FEE_3_INR,
   MAX_MEDKITS,
   MEDKIT_HEAL_AMOUNT,
   MEDKIT_PRICE_INR,
@@ -36,6 +47,7 @@ import {
   SAVINGS_ANNUAL_RATE,
   SavedGameState,
   STARTING_CASH_INR,
+  STREET_BRIBE_INR,
   StreetStallHudInfo,
   StreetStallMenuItem,
   TimeOfDayHud,
@@ -57,11 +69,14 @@ import { soundEngine } from './audio';
 import {
   AtmInfo,
   BuildingCollider,
+  CentralJailRig,
   ChaiStallInfo,
   CircleCollider,
+  CourtroomStageRig,
   DogRig,
   HelicopterRig,
   HumanoidRig,
+  InteriorLightSpot,
   RescueVanRig,
   SacredLandmarkInfo,
   ShopDealerInfo,
@@ -70,6 +85,7 @@ import {
   VehicleRig,
   WaypointBeaconRig,
   buildCityEnvironment,
+  createDistrictCourtroomStage,
   createHumanoidModel,
   createIndianDogModel,
   createPoliceChopperModel,
@@ -122,6 +138,7 @@ interface NpcEntity {
   alertedTimer: number;
   greetCooldown: number;
   chaiCompanionTarget: ChaiStallInfo | null;
+  bribeRefused?: boolean;
 }
 
 type DogBehavior = 'ROAM' | 'FOLLOW' | 'SIT';
@@ -168,8 +185,19 @@ interface VehicleEntity {
   hitCooldowns: Map<number, number>;
   occupiedByPlayer: boolean;
   aiEnabled: boolean;
+  aiDisabled: boolean;
+  hasAiRider?: boolean;
   playerClaimed?: boolean;
   isStarterParked?: boolean;
+  origX: number;
+  origZ: number;
+  origYaw: number;
+  origSpeed: number;
+  origWasStarter: boolean;
+  origColor?: number;
+  origAxis: 'x' | 'z';
+  origDir: 1 | -1;
+  origRoadCenter: number;
   isTacticalReinforcement?: boolean;
   unitTier?: 1 | 2 | 3 | 4 | 5;
   policeState: PoliceCarState;
@@ -300,6 +328,30 @@ function normalizeAngle(a: number): number {
   return a;
 }
 
+const TIME_LIGHT_STOPS: {
+  min: number;
+  sky: number;
+  sun: number;
+  sunInt: number;
+  hemi: number;
+  hemiInt: number;
+  fog: number;
+  lamp: number;
+  exp: number;
+}[] = [
+  { min: 0, sky: 0x09101d, sun: 0x6488ea, sunInt: 0.58, hemi: 0x3b4d78, hemiInt: 0.42, fog: 0.0046, lamp: 1.85, exp: 0.96 },
+  { min: 300, sky: 0x162038, sun: 0x8ea4d8, sunInt: 0.65, hemi: 0x52648f, hemiInt: 0.48, fog: 0.0044, lamp: 1.5, exp: 0.99 },
+  { min: 420, sky: 0xd98a5f, sun: 0xffd2a0, sunInt: 1.45, hemi: 0xfdcba0, hemiInt: 0.68, fog: 0.0038, lamp: 0.55, exp: 1.08 },
+  { min: 540, sky: 0x5c9ce0, sun: 0xffefd2, sunInt: 1.95, hemi: 0xaad4ff, hemiInt: 0.82, fog: 0.0032, lamp: 0.1, exp: 1.14 },
+  { min: 760, sky: 0x4ba0ea, sun: 0xfff8ea, sunInt: 2.25, hemi: 0xc2e2ff, hemiInt: 0.92, fog: 0.0029, lamp: 0.05, exp: 1.18 },
+  { min: 990, sky: 0x66a3dd, sun: 0xffe9c7, sunInt: 1.9, hemi: 0xb0d3f5, hemiInt: 0.82, fog: 0.0032, lamp: 0.15, exp: 1.14 },
+  { min: 1110, sky: 0xc96c45, sun: 0xfb923c, sunInt: 1.35, hemi: 0xf09d6c, hemiInt: 0.64, fog: 0.0039, lamp: 1.1, exp: 1.06 },
+  { min: 1200, sky: 0x181c30, sun: 0x7c8cc4, sunInt: 0.72, hemi: 0x4a5580, hemiInt: 0.48, fog: 0.0045, lamp: 1.75, exp: 0.98 },
+  { min: 1440, sky: 0x09101d, sun: 0x6488ea, sunInt: 0.58, hemi: 0x3b4d78, hemiInt: 0.42, fog: 0.0046, lamp: 1.85, exp: 0.96 },
+];
+
+const COLLIDER_CELL_SIZE = 60;
+
 function lerpAngle(current: number, target: number, alpha: number): number {
   const diff = normalizeAngle(target - current);
   return normalizeAngle(current + diff * alpha);
@@ -315,6 +367,7 @@ export class GameEngine {
   private hemiLight!: THREE.HemisphereLight;
   private rimLight!: THREE.DirectionalLight;
   private nightEmissiveMats: THREE.MeshStandardMaterial[] = [];
+  private lastLampIntensity = -1;
   private isSoftwareGl = false;
 
   private frameId = 0;
@@ -327,13 +380,17 @@ export class GameEngine {
   private mode: GameMode = 'TITLE';
   private settings: GameSettings = { ...DEFAULT_SETTINGS };
 
-  // World
+  // World & Spatial Optimization
   private colliders: BuildingCollider[] = [];
+  private colliderGrid = new Map<string, BuildingCollider[]>();
+  private readonly _visitedColliders = new Set<BuildingCollider>();
+  private disabledColliders = new Set<BuildingCollider>();
   private circleColliders: CircleCollider[] = [];
   private gunShopPos = new THREE.Vector3(30, 0, -14);
   private hospitalPos = new THREE.Vector3(-30, 0, 14);
   private bankPos = new THREE.Vector3(-30, 0, -74);
   private licenseOfficePos = new THREE.Vector3(-90, 0, 46);
+  private courtExitPos = new THREE.Vector3(-90, 0, 108);
   private mafiaYardPos = new THREE.Vector3(150, 0, -150);
   private roadCenters: number[] = [-300, -240, -180, -120, -60, 0, 60, 120, 180, 240, 300];
   private shopDisplays: ShopDisplayGun[] = [];
@@ -345,6 +402,11 @@ export class GameEngine {
   private atms: AtmInfo[] = [];
   private sacredBlessCooldown = 0;
   private trafficSignals: TrafficSignalRig[] = [];
+  private signalStateCache = new Map<string, { ns: string; ew: string }>();
+  private interiorLightSpots: InteriorLightSpot[] = [];
+  private interiorLight!: THREE.PointLight;
+  private jailRig: CentralJailRig | null = null;
+  private courtroomStage: CourtroomStageRig | null = null;
   private signalTime = 0;
   private redLightViolations = 0;
   private challanCooldown = 0;
@@ -364,6 +426,11 @@ export class GameEngine {
   private swatKilledCount = 0;
   private commandoKilledCount = 0;
   private policeVehiclesDestroyed = 0;
+  private crimeUnlicensedWeapon = false;
+  private crimeTrafficViolations = 0;
+  private crimeVehicleTheftCount = 0;
+  private crimeStolePoliceCar = false;
+  private crimeCivilianAssaults = 0;
   private enforcementSpawnCooldown = 0;
   private activeWitness: {
     npcId: number;
@@ -452,6 +519,13 @@ export class GameEngine {
   private kills = 0;
   private wastedReason = '';
   private wastedLock = false;
+  private bustedLock = false;
+  private bustedReason = '';
+  private bustedConfiscated: string[] = [];
+  private playerShotAtPolice = false;
+  private surrenderHolding = false;
+  private surrenderHoldTimer = 0;
+  private corneredArrestTimer = 0;
 
   // Player combat & animation
   private ownedWeapons: Set<WeaponId> = new Set(['fists']);
@@ -529,12 +603,37 @@ export class GameEngine {
   private touchMoveY = 0;
   private touchSprint = false;
 
+  // Courtroom & Central Jail Interactive State
+  private courtroomState: CourtroomState | null = null;
+  private courtDialogueTimer = 0;
+  private courtGavelTimer = 0;
+  private jailState: {
+    starsAtArrest: number;
+    sentenceDaysTotal: number;
+    remainingDays: number;
+    wardenBribeCost: number;
+    workCount: number;
+    activeTaskKind: 'NONE' | 'WORK' | 'ESCAPE';
+    taskTimer: number;
+    taskDuration: number;
+    taskStartX: number;
+    taskStartZ: number;
+    spottedByGuard: boolean;
+    nearStation: 'BUNK' | 'WORKSHOP' | 'WARDEN' | 'ESCAPE_GATE' | null;
+    statusBanner: string | null;
+    spotCooldown: number;
+  } | null = null;
+  private jailEscrowedWeapons: WeaponId[] = [];
+  private jailEscrowedAmmo: Partial<Record<WeaponId, number>> = {};
+
   // Reusable math helpers (zero GC in render loop)
   private readonly _proj = new THREE.Vector3();
   private readonly _camTarget = new THREE.Vector3();
   private readonly _camDesired = new THREE.Vector3();
   private readonly _raycaster = new THREE.Raycaster();
   private readonly _ndc = new THREE.Vector2();
+  private readonly _tmpColorA = new THREE.Color();
+  private readonly _tmpColorB = new THREE.Color();
 
   constructor(container: HTMLElement, callbacks: EngineCallbacks) {
     this.container = container;
@@ -711,7 +810,7 @@ export class GameEngine {
     this.isSoftwareGl = this.detectSoftwareGl();
 
     const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1;
-    const maxDpr = isMobile ? 1.5 : 2;
+    const maxDpr = isMobile ? 1.25 : 1.5;
     try {
       this.renderer = new THREE.WebGLRenderer({
         antialias: !this.isSoftwareGl && !isMobile,
@@ -725,7 +824,7 @@ export class GameEngine {
     this.renderer.toneMappingExposure = 1.12;
     this.renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, maxDpr));
     this.renderer.shadowMap.enabled = !this.isSoftwareGl && this.settings.shadowsEnabled;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.setSize(this.container.clientWidth || window.innerWidth, this.container.clientHeight || window.innerHeight);
 
     this.renderer.domElement.style.display = 'block';
@@ -751,7 +850,7 @@ export class GameEngine {
     }
 
     const aspect = (this.container.clientWidth || window.innerWidth) / Math.max(1, this.container.clientHeight || window.innerHeight);
-    this.camera = new THREE.PerspectiveCamera(62, aspect, 0.12, 680);
+    this.camera = new THREE.PerspectiveCamera(62, aspect, 0.12, 420);
     this.scene.add(this.camera);
 
     // Warm/Cool 3-point outdoor Day-Noon-Midnight lighting rig
@@ -778,14 +877,20 @@ export class GameEngine {
     this.rimLight.position.set(-60, 40, -60);
     this.scene.add(this.rimLight);
 
+    // Single pooled dynamic PointLight for interiors & Courtroom stage
+    this.interiorLight = new THREE.PointLight(0xffedd5, 0, 28, 1.4);
+    this.scene.add(this.interiorLight);
+
     const maxAniso = this.renderer.capabilities.getMaxAnisotropy();
     const env = buildCityEnvironment(this.scene, maxAniso);
     this.colliders = env.colliders;
+    this.buildColliderGrid();
     this.circleColliders = env.circleColliders;
     this.gunShopPos = env.gunShopPos;
     this.hospitalPos = env.hospitalPos;
     this.bankPos = env.bankPos;
     this.licenseOfficePos = env.licenseOfficePos;
+    this.courtExitPos = env.courtExitPos;
     this.mafiaYardPos = env.mafiaYardPos;
     this.roadCenters = env.roadCenters;
     this.shopDisplays = env.shopDisplays;
@@ -797,6 +902,9 @@ export class GameEngine {
     this.atms = env.atms;
     this.trafficSignals = env.trafficSignals;
     this.nightEmissiveMats = env.nightEmissiveMats;
+    this.interiorLightSpots = env.interiorLightSpots;
+    this.jailRig = env.jailRig;
+    this.courtroomStage = createDistrictCourtroomStage(this.scene);
     this.shopInteractMeshes = [
       ...this.shopDisplays.map((d) => d.hitMesh),
       ...(this.shopDealer ? [this.shopDealer.hitMesh] : []),
@@ -809,6 +917,27 @@ export class GameEngine {
     this.waypointBeacon = createWaypointBeacon();
     this.scene.add(this.waypointBeacon.root);
     this.applyTimeOfDayLighting();
+  }
+
+  private buildColliderGrid(): void {
+    this.colliderGrid.clear();
+    for (const c of this.colliders) {
+      const gx0 = Math.floor(c.minX / COLLIDER_CELL_SIZE);
+      const gx1 = Math.floor(c.maxX / COLLIDER_CELL_SIZE);
+      const gz0 = Math.floor(c.minZ / COLLIDER_CELL_SIZE);
+      const gz1 = Math.floor(c.maxZ / COLLIDER_CELL_SIZE);
+      for (let gx = gx0; gx <= gx1; gx++) {
+        for (let gz = gz0; gz <= gz1; gz++) {
+          const key = `${gx},${gz}`;
+          let bucket = this.colliderGrid.get(key);
+          if (!bucket) {
+            bucket = [];
+            this.colliderGrid.set(key, bucket);
+          }
+          bucket.push(c);
+        }
+      }
+    }
   }
 
   private populateWorld(): void {
@@ -857,7 +986,16 @@ export class GameEngine {
       hitCooldowns: new Map(),
       occupiedByPlayer: false,
       aiEnabled: false,
+      aiDisabled: false,
       isStarterParked: true,
+      origX: 7.5,
+      origZ: 14.0,
+      origYaw: parkedYaw,
+      origSpeed: 0,
+      origWasStarter: true,
+      origAxis: 'z',
+      origDir: -1,
+      origRoadCenter: 0,
       policeState: 'PATROL',
       maxOfficers: 1,
       spawnedOfficerIds: [],
@@ -875,6 +1013,7 @@ export class GameEngine {
     ];
     for (const pb of parkedBikes) {
       const rig = createVehicleModel('bike', pb.color);
+      if (rig.riderRig) rig.riderRig.root.visible = false;
       rig.root.position.set(pb.x, 0, pb.z);
       rig.root.rotation.y = pb.yaw;
       this.scene.add(rig.root);
@@ -897,7 +1036,18 @@ export class GameEngine {
         hitCooldowns: new Map(),
         occupiedByPlayer: false,
         aiEnabled: false,
+        aiDisabled: false,
+        hasAiRider: false,
         isStarterParked: true,
+        origX: pb.x,
+        origZ: pb.z,
+        origYaw: pb.yaw,
+        origSpeed: 0,
+        origWasStarter: true,
+        origColor: pb.color,
+        origAxis: 'z',
+        origDir: -1,
+        origRoadCenter: 0,
         policeState: 'PATROL',
         maxOfficers: 1,
         spawnedOfficerIds: [],
@@ -916,6 +1066,10 @@ export class GameEngine {
     ];
     roamingBikes.forEach((rb) => {
       const rig = createVehicleModel('bike', rb.color);
+      if (rig.riderRig) {
+        rig.riderRig.root.visible = true;
+        rig.riderRig.helmetMesh.visible = true;
+      }
       const laneCoord = getLeftHandLaneCoord(rb.rc, rb.axis, rb.dir);
       const vx = rb.axis === 'z' ? laneCoord : rb.along;
       const vz = rb.axis === 'z' ? rb.along : laneCoord;
@@ -942,6 +1096,17 @@ export class GameEngine {
         hitCooldowns: new Map(),
         occupiedByPlayer: false,
         aiEnabled: true,
+        aiDisabled: false,
+        hasAiRider: true,
+        origX: vx,
+        origZ: vz,
+        origYaw: yaw,
+        origSpeed: 8.2,
+        origWasStarter: false,
+        origColor: rb.color,
+        origAxis: rb.axis,
+        origDir: rb.dir,
+        origRoadCenter: rb.rc,
         policeState: 'PATROL',
         maxOfficers: 1,
         spawnedOfficerIds: [],
@@ -986,6 +1151,15 @@ export class GameEngine {
         hitCooldowns: new Map(),
         occupiedByPlayer: false,
         aiEnabled: true,
+        aiDisabled: false,
+        origX: vx,
+        origZ: vz,
+        origYaw: yaw,
+        origSpeed: 6.5,
+        origWasStarter: false,
+        origAxis: rsp.axis,
+        origDir: rsp.dir,
+        origRoadCenter: rsp.rc,
         policeState: 'PATROL',
         maxOfficers: 1,
         spawnedOfficerIds: [],
@@ -1011,7 +1185,8 @@ export class GameEngine {
     ];
     spawnRoads.forEach((sp, idx) => {
       const kind = idx % 2 === 0 ? 'muscle' : 'sedan';
-      const rig = createVehicleModel(kind, carColors[idx]);
+      const color = carColors[idx];
+      const rig = createVehicleModel(kind, color);
       const laneCoord = getLeftHandLaneCoord(sp.rc, sp.axis, sp.dir);
       const vx = sp.axis === 'z' ? laneCoord : sp.along;
       const vz = sp.axis === 'z' ? sp.along : laneCoord;
@@ -1039,6 +1214,16 @@ export class GameEngine {
         hitCooldowns: new Map(),
         occupiedByPlayer: false,
         aiEnabled: true,
+        aiDisabled: false,
+        origX: vx,
+        origZ: vz,
+        origYaw: yaw,
+        origSpeed: 7.2,
+        origWasStarter: false,
+        origColor: color,
+        origAxis: sp.axis,
+        origDir: sp.dir,
+        origRoadCenter: sp.rc,
         policeState: 'PATROL',
         maxOfficers: 1,
         spawnedOfficerIds: [],
@@ -1085,6 +1270,15 @@ export class GameEngine {
         hitCooldowns: new Map(),
         occupiedByPlayer: false,
         aiEnabled: true,
+        aiDisabled: false,
+        origX: vx,
+        origZ: vz,
+        origYaw: yaw,
+        origSpeed: 7.8,
+        origWasStarter: false,
+        origAxis: sp.axis,
+        origDir: sp.dir,
+        origRoadCenter: sp.rc,
         policeState: 'PATROL',
         maxOfficers: idx % 2 === 0 ? 2 : 1,
         spawnedOfficerIds: [],
@@ -1584,11 +1778,53 @@ export class GameEngine {
     }
 
     if (code === 'Escape') {
-      // Let Esc unlock pointer if locked, or pause game if unlocked
-      if (this.mode === 'PLAYING' && document.pointerLockElement !== this.renderer.domElement) {
+      // Let Esc unlock pointer if locked, or pause/resume cleanly without breaking JAIL mode
+      if ((this.mode === 'PLAYING' || this.mode === 'JAIL') && document.pointerLockElement !== this.renderer.domElement) {
         this.setMode('PAUSED');
       } else if (this.mode === 'PAUSED') {
-        this.setMode('PLAYING');
+        this.setMode(this.jailState ? 'JAIL' : 'PLAYING');
+      }
+      return;
+    }
+
+    if (this.mode === 'COURTROOM') {
+      if (code === 'Space' || code === 'Enter') {
+        e.preventDefault();
+        this.advanceCourtroomDialogue();
+      }
+      return;
+    }
+
+    if (this.mode === 'JAIL') {
+      this.keys.add(code);
+      soundEngine.unlock();
+      if (code === 'KeyE') {
+        this.triggerContextAction();
+      } else if (code === 'KeyC') {
+        this.toggleFirstPerson();
+      } else if (code === 'Digit1') {
+        this.jailSkipSentence();
+      } else if (code === 'Digit2') {
+        this.jailPerformWork();
+      } else if (code === 'Digit3') {
+        if (this.jailState) {
+          const cost = this.jailState.wardenBribeCost;
+          this.syncBankInterest(true);
+          const sav = this.savingsPrincipal + this.savingsInterest;
+          if (this.playerCash >= cost) this.jailBribeWarden('cash');
+          else if (sav >= cost) this.jailBribeWarden('bank');
+          else {
+            this.callbacks.onToast({
+              text: `Warden Bribe ke liye ${formatRs(cost)} Cash ya Bank Savings mein chahiye!`,
+              tone: 'warn',
+            });
+          }
+        }
+      } else if (code === 'Digit4') {
+        this.jailStartPrisonBreak();
+      } else if (code === 'Space') {
+        e.preventDefault();
+        this.triggerJump();
       }
       return;
     }
@@ -1663,7 +1899,13 @@ export class GameEngine {
     } else if (code === 'KeyL') {
       this.toggleHelmet();
     } else if (code === 'KeyH') {
-      this.useMedkit();
+      if (this.wantedLevel >= 1 && this.missionPhase === 'NONE') {
+        if (!e.repeat) {
+          this.surrenderHolding = true;
+        }
+      } else {
+        this.useMedkit();
+      }
     } else if (code === 'KeyE') {
       this.triggerContextAction();
     } else if (code === 'Digit1') {
@@ -1686,6 +1928,14 @@ export class GameEngine {
 
   private handleKeyUp = (e: KeyboardEvent): void => {
     this.keys.delete(e.code);
+    if (e.code === 'KeyH' && this.surrenderHolding) {
+      const quickTap = this.surrenderHoldTimer < 0.28;
+      this.surrenderHolding = false;
+      this.surrenderHoldTimer = 0;
+      if (quickTap && this.mode === 'PLAYING' && this.playerMedkits > 0 && this.playerHp < this.playerMaxHp) {
+        this.useMedkit();
+      }
+    }
     if (e.code === 'KeyQ' && this.weaponWheelOpen) {
       this.weaponWheelOpen = false;
       this.callbacks.onWeaponWheelChange(false);
@@ -1843,6 +2093,16 @@ export class GameEngine {
   }
 
   private handleMouseDown = (e: MouseEvent): void => {
+    if (this.mode === 'JAIL') {
+      soundEngine.unlock();
+      this.lastMouseX = e.clientX;
+      this.lastMouseY = e.clientY;
+      this.hasMousePos = true;
+      if (e.button === 0) {
+        this.mouseDownLeft = true;
+      }
+      return;
+    }
     if (this.mode !== 'PLAYING') return;
     if (this.weaponWheelOpen) {
       if (e.button === 0) {
@@ -1888,7 +2148,12 @@ export class GameEngine {
   };
 
   private handleMouseMove = (e: MouseEvent): void => {
-    if (this.mode !== 'PLAYING' || this.weaponWheelOpen) return;
+    if ((this.mode !== 'PLAYING' && this.mode !== 'JAIL') || this.weaponWheelOpen) return;
+    if (this.mode === 'JAIL' && document.pointerLockElement !== this.renderer.domElement && !this.mouseDownLeft) {
+      this.lastMouseX = e.clientX;
+      this.lastMouseY = e.clientY;
+      return;
+    }
 
     let dx = 0;
     let dy = 0;
@@ -1977,7 +2242,7 @@ export class GameEngine {
   }
 
   public triggerJump(): void {
-    if (this.mode !== 'PLAYING' || this.currentVehicle || this.playerY > 0.02) return;
+    if ((this.mode !== 'PLAYING' && this.mode !== 'JAIL') || this.currentVehicle || this.playerY > 0.02) return;
     soundEngine.unlock();
     this.playerVy = 8.4;
     soundEngine.playJump();
@@ -2478,6 +2743,31 @@ export class GameEngine {
   }
 
   public triggerContextAction(): void {
+    if (this.mode === 'JAIL' && this.jailState) {
+      soundEngine.unlock();
+      if (this.jailState.nearStation === 'BUNK') {
+        this.jailSkipSentence();
+      } else if (this.jailState.nearStation === 'WORKSHOP') {
+        this.jailPerformWork();
+      } else if (this.jailState.nearStation === 'ESCAPE_GATE') {
+        this.jailStartPrisonBreak();
+      } else if (this.jailState.nearStation === 'WARDEN') {
+        const cost = this.jailState.wardenBribeCost;
+        this.syncBankInterest(true);
+        const savTotal = this.savingsPrincipal + this.savingsInterest;
+        if (this.playerCash >= cost) {
+          this.jailBribeWarden('cash');
+        } else if (savTotal >= cost) {
+          this.jailBribeWarden('bank');
+        } else {
+          this.callbacks.onToast({
+            text: `Warden ko ${formatRs(cost)} chahiye (Cash: ${formatRs(this.playerCash)} · Bank: ${formatRsExact(savTotal)}). Workshop se kamaao ya Bunk se Saza skip karo!`,
+            tone: 'warn',
+          });
+        }
+      }
+      return;
+    }
     if (this.mode !== 'PLAYING') return;
     soundEngine.unlock();
     if (this.policeInspection && this.policeInspection.phase === 'ASKING') {
@@ -2682,6 +2972,94 @@ export class GameEngine {
     return true;
   }
 
+  public isStreetBribeAvailable(): boolean {
+    if (this.mode !== 'PLAYING' || this.wantedLevel < 1 || this.wantedLevel > 2 || this.playerShotAtPolice) {
+      return false;
+    }
+    return this.npcs.some(
+      (n) =>
+        !n.dead &&
+        n.isPolice &&
+        !n.bribeRefused &&
+        Math.hypot(n.x - this.playerX, n.z - this.playerZ) < 16,
+    );
+  }
+
+  public offerStreetBribe(): boolean {
+    if (this.wantedLevel < 1 || this.wantedLevel > 2) {
+      this.callbacks.onToast({ text: 'Street setting sirf 1–2★ police par kaam karti hai.', tone: 'warn' });
+      return false;
+    }
+    if (this.playerShotAtPolice) {
+      this.callbacks.onToast({ text: 'Goli chalane ke baad police setting nahi legi!', tone: 'warn' });
+      return false;
+    }
+    let nearestCop: NpcEntity | null = null;
+    let bestD = 16;
+    for (const n of this.npcs) {
+      if (n.dead || !n.isPolice || n.bribeRefused) continue;
+      const d = Math.hypot(n.x - this.playerX, n.z - this.playerZ);
+      if (d < bestD) {
+        bestD = d;
+        nearestCop = n;
+      }
+    }
+    if (!nearestCop) {
+      this.callbacks.onToast({ text: 'Koi police officer rishwat ke liye paas nahi hai.', tone: 'warn' });
+      return false;
+    }
+    if (this.playerCash < STREET_BRIBE_INR) {
+      this.callbacks.onToast({ text: `Chai-paani ke liye ${formatRs(STREET_BRIBE_INR)} chahiye.`, tone: 'warn' });
+      return false;
+    }
+
+    this.playerCash -= STREET_BRIBE_INR;
+    const successChance = this.wantedLevel === 1 ? 0.58 : 0.45;
+    if (Math.random() < successChance) {
+      soundEngine.playCashPickup();
+      this.speakWithSubtitle(
+        nearestCop.name,
+        'officer',
+        nearestCop.id,
+        'Chalo bhai, aaj jaane deta hoon... aage se dhyan rakhna!',
+        'चलो भाई, आज जाने देता हूँ... आगे से ध्यान रखना!',
+      );
+      this.clearWanted();
+      this.callbacks.onToast({
+        text: `${formatRs(STREET_BRIBE_INR)} Chai-paani accepted — Police case rafa-dafa!`,
+        tone: 'cash',
+      });
+      this.saveGameState();
+      this.emitHudSnapshot();
+      return true;
+    }
+
+    // Backfire: honest officer refuses, flags bribeRefused, and escalates +1★
+    nearestCop.bribeRefused = true;
+    nearestCop.hostile = true;
+    soundEngine.playPoliceWhistle();
+    this.speakWithSubtitle(
+      nearestCop.name,
+      'officer',
+      nearestCop.id,
+      'Mujhe rishwat deta hai?! Badtameez, ab seedha lockup chal!',
+      'मुझे रिश्वत देता है?! बदतमीज़, अब सीधा लॉकअप चल!',
+    );
+    this.setWantedLevelSafe(Math.min(3, this.wantedLevel + 1));
+    this.callbacks.onToast({
+      text: `${nearestCop.name} refused bribe! Wanted escalated (+1★)!`,
+      tone: 'warn',
+    });
+    this.saveGameState();
+    this.emitHudSnapshot();
+    return false;
+  }
+
+  public triggerManualSurrender(): void {
+    if (this.mode !== 'PLAYING' || this.wantedLevel < 1) return;
+    this.triggerBusted('Aapne police ke saamne haath upar karke surrender kar diya!');
+  }
+
   public setMode(next: GameMode): void {
     if (this.mode === next) return;
     this.mode = next;
@@ -2690,6 +3068,8 @@ export class GameEngine {
     this.hasMousePos = false;
     this.touchMoveX = 0;
     this.touchMoveY = 0;
+    this.surrenderHolding = false;
+    this.surrenderHoldTimer = 0;
     if (next !== 'PLAYING') {
       this.adsActive = false;
       this.releasePointerLock();
@@ -2698,9 +3078,10 @@ export class GameEngine {
       this.weaponWheelOpen = false;
       this.callbacks.onWeaponWheelChange(false);
     }
-    soundEngine.setPaused(next !== 'PLAYING');
-    if (next === 'PAUSED' || next === 'WASTED') {
+    soundEngine.setPaused(next !== 'PLAYING' && next !== 'JAIL' && next !== 'COURTROOM');
+    if (next === 'PAUSED' || next === 'WASTED' || next === 'BUSTED' || next === 'COURTROOM') {
       soundEngine.setSirenActive(false);
+      soundEngine.setChopperActive(false);
       this.saveGameState();
     }
     this.callbacks.onModeChange(next);
@@ -2881,20 +3262,683 @@ export class GameEngine {
     return { ok: false, message: 'Unknown cheat code. Try HESOYAM, LXGIWYL, AEZAKMI, or ASNAEB.' };
   }
 
-  public respawnAtHospital(): void {
-    // Death NEVER resets character stats, kills, guns, ammo, medkits, or settings.
-    // Deducts ₹5,000 hospital charge (allowed to go negative). At <= -₹50,000, Royal Bank Of India bailout triggers!
-    this.wastedLock = false;
+  private performPartialWorldCleanup(restoreHijackedVehicles: boolean): void {
+    // Partial Reset Only: preserves Royal Bank balances/FDs, Day/Time, kills, licenses & distant NPCs.
     this.playerHp = this.playerMaxHp;
+    this.playerStamina = this.playerMaxStamina;
+    this.staminaExhausted = false;
     this.playerY = 0;
     this.playerVy = 0;
-    this.clearWanted();
+    this.surrenderHolding = false;
+    this.surrenderHoldTimer = 0;
+    this.corneredArrestTimer = 0;
 
     if (this.currentVehicle) {
       this.currentVehicle.occupiedByPlayer = false;
+      this.currentVehicle.speed = 0;
+      this.currentVehicle.rig.root.rotation.z = 0;
       this.currentVehicle = null;
-      this.playerRig.root.visible = true;
     }
+    this.playerRig.leftArm.rotation.x = 0;
+    this.playerRig.rightArm.rotation.x = 0;
+    this.playerRig.leftLeg.rotation.x = 0;
+    this.playerRig.rightLeg.rotation.x = 0;
+    this.playerRig.root.rotation.z = 0;
+    this.playerRig.helmetMesh.visible = this.hasHelmet && this.helmetOn;
+    this.playerRig.root.visible = !this.firstPerson;
+    this.refreshPlayerWeaponMesh();
+
+    this.clearWanted();
+
+    for (const ex of this.explosions) {
+      this.scene.remove(ex.fireball);
+      this.scene.remove(ex.shockwave);
+    }
+    this.explosions = [];
+    for (const sp of this.smokePuffs) {
+      this.scene.remove(sp.mesh);
+    }
+    this.smokePuffs = [];
+
+    const keptVehicles: VehicleEntity[] = [];
+    for (const v of this.vehicles) {
+      if (v.isTacticalReinforcement) {
+        this.scene.remove(v.rig.root);
+        continue;
+      }
+      if (restoreHijackedVehicles && (v.playerClaimed || v.aiDisabled)) {
+        if (v.destroyed) {
+          this.scene.remove(v.rig.root);
+          v.rig = createVehicleModel(v.kind, v.origColor);
+          this.scene.add(v.rig.root);
+        }
+        v.destroyed = false;
+        v.hp = v.maxHp;
+        v.smokeTimer = 0;
+        v.wreckTimer = 0;
+        v.x = v.origX;
+        v.z = v.origZ;
+        v.yaw = v.origYaw;
+        v.speed = v.origSpeed;
+        v.patrolAxis = v.origAxis;
+        v.patrolDir = v.origDir;
+        v.patrolRoadCenter = v.origRoadCenter;
+        v.occupiedByPlayer = false;
+        v.playerClaimed = false;
+        v.aiDisabled = false;
+        v.isStarterParked = v.origWasStarter;
+        v.aiEnabled = !v.origWasStarter;
+        v.policeState = 'PATROL';
+        v.spawnedOfficerIds = [];
+        if (v.kind === 'bike' && v.rig.riderRig) {
+          const showAiRider = !v.origWasStarter;
+          v.hasAiRider = showAiRider;
+          v.rig.riderRig.root.visible = showAiRider;
+          v.rig.riderRig.helmetMesh.visible = true;
+        }
+        v.rig.root.position.set(v.x, 0, v.z);
+        v.rig.root.rotation.set(0, v.yaw, 0);
+        keptVehicles.push(v);
+        continue;
+      }
+      if (v.destroyed) {
+        // Clear blasted wrecks off the roads
+        this.scene.remove(v.rig.root);
+        continue;
+      }
+      keptVehicles.push(v);
+    }
+    this.vehicles = keptVehicles;
+  }
+
+  private triggerBusted(reason: string): void {
+    if (this.bustedLock || this.wastedLock || this.mode === 'COURTROOM' || this.mode === 'JAIL') return;
+    this.bustedLock = true;
+    this.bustedReason = reason;
+    this.bustedConfiscated = [];
+
+    const starsAtArrest = clamp(Math.max(1, this.wantedLevel), 1, 5);
+    const hadSwatOrArmyKills = this.swatKilledCount > 0 || this.commandoKilledCount > 0;
+    const charges: string[] = [];
+    if (this.policeKilledCount > 0) charges.push('Police Officer par goli chalana / hamla (IPC 307 / 353)');
+    if (hadSwatOrArmyKills) charges.push('Special Task Force / Army par hamla (UAPA / Sec 121)');
+    if (this.policeVehiclesDestroyed > 0) charges.push('Sarkari Police Vahan tabah karna (PDPP Act)');
+    if (this.civilianKillsInSpree > 0) charges.push('Aam nagrik ki jaan lena (IPC 302 / 304)');
+    if (this.crimeCivilianAssaults > 0) charges.push('Bazaar mein maar-peet aur hinsa (IPC 323)');
+    if (this.crimeStolePoliceCar) charges.push('Police Jeep / Sarkari Vahan chori (IPC 379)');
+    if (this.crimeVehicleTheftCount > 0) charges.push('Private Gaadi / Bike chori (IPC 379)');
+    if (this.crimeUnlicensedWeapon || (!this.hasGunLicense && this.ownedWeapons.size > 1)) {
+      charges.push('Bina Valid Arms License ke hathiyar rakhna (Arms Act Sec 25)');
+    }
+    if (this.crimeTrafficViolations > 0 || this.redLightViolations > 0 || this.trafficFineStrikes > 0) {
+      charges.push('Laal Batti todna / Bina Helmet-DL rash driving (MV Act)');
+    }
+    if (charges.length === 0) {
+      charges.push('Police nirdeshon ka ullanghan aur bhagne ki koshish');
+    }
+
+    // Perform partial world cleanup before courtroom entry (preserves Bank, Time & parked cars)
+    this.performPartialWorldCleanup(false);
+
+    if (!this.hasGunLicense) {
+      const lost: string[] = [];
+      for (const wid of WEAPON_ORDER) {
+        if (wid === 'fists') continue;
+        if (this.ownedWeapons.has(wid)) {
+          lost.push(WEAPONS[wid].shortName);
+          this.ammo[wid] = 0;
+        }
+      }
+      this.bustedConfiscated = lost;
+      this.ownedWeapons = new Set(['fists']);
+      this.activeWeapon = 'fists';
+      this.refreshPlayerWeaponMesh();
+    }
+
+    soundEngine.playPoliceWhistle();
+
+    if (!this.courtroomStage) {
+      this.setMode('BUSTED');
+      return;
+    }
+
+    let verdictKind: CourtroomVerdictKind = 'BAILABLE';
+    let bailAmount = starsAtArrest === 1 ? COURT_BAIL_FEE_INR : 5000;
+    let lawyerFee = LAWYER_FEE_1_2_INR;
+    let jailDays = 1;
+    let verdictHeadline = 'ZAMANAT MANZOOR (Bail Granted)';
+
+    if (starsAtArrest >= 4 || hadSwatOrArmyKills) {
+      verdictKind = 'NO_BAIL';
+      bailAmount = 0;
+      lawyerFee = 0;
+      jailDays = 3;
+      verdictHeadline = 'ZAMANAT KHARIJ! SEEDHA JAIL (Non-Bailable Offense)';
+    } else if (starsAtArrest === 3) {
+      verdictKind = 'HIGH_BAIL';
+      bailAmount = HIGH_BAIL_3_STAR_INR;
+      lawyerFee = LAWYER_FEE_3_INR;
+      jailDays = 2;
+      verdictHeadline = 'BHARI ZAMANAT YA JUDICIAL CUSTODY (High Bail Set)';
+    }
+
+    const primaryCharge = charges[0];
+    const secondaryCharge = charges[1] ?? 'Shanti bhang karne ka aarop';
+
+    const dialogueTurns: CourtroomDialogueTurn[] = [
+      {
+        speakerRole: 'judge',
+        speakerName: 'Hon. Judge S.K. Deshmukh',
+        title: 'District & Sessions Judge',
+        text: `Court ki karyawahi shuru hoti hai! ${starsAtArrest}★ star case mein mulzim kathgare mein khada hai. Inspector, aarop pesh karein.`,
+        tts: `कोर्ट की कार्यवाही शुरू होती है! ${starsAtArrest} स्टार केस में मुल्ज़िम कठघरे में खड़ा है। इंस्पेक्टर, आरोप पेश करें।`,
+      },
+      {
+        speakerRole: 'inspector',
+        speakerName: 'Inspector Vijay Rathore',
+        title: 'Arresting Officer · Bharat Police',
+        text: `Your Honour! Mulzim par "${primaryCharge}" aur "${secondaryCharge}" ke pakke saboot hain. Police ko iski gair-kanooni harkaton par sakht karwai karni padi.`,
+        tts: `योर ऑनर! मुल्ज़िम पर गंभीर आरोप और पक्के सबूत हैं। पुलिस को सख्त कार्रवाई करनी पड़ी।`,
+      },
+      {
+        speakerRole: 'lawyer',
+        speakerName: 'Adv. Meera Sharma',
+        title: 'Defense Vakil',
+        text:
+          verdictKind === 'BAILABLE'
+            ? `Maai-baap, mere client ne galti maani hai aur police ke saath sahyog kiya! Yeh chhota bailable maamla hai — naram zamanat par rihaai di jaaye.`
+            : verdictKind === 'HIGH_BAIL'
+              ? `Your Honour, maamla gambhir zaroor hai par mera client pehli baar pesh hua hai. Bhari zamanat rakhkar bail manzoor ki jaaye.`
+              : `My Lord, police ne aatmaraksha ke halaat ko badha-chadhakar dikhaya hai! Mere client ko ek mauka aur diya jaaye.`,
+        tts:
+          verdictKind === 'BAILABLE'
+            ? `माई-बाप, मेरे क्लाइंट ने गलती मानी है और यह ज़मानती मामला है। नरम ज़मानत पर रिहाई दी जाए।`
+            : verdictKind === 'HIGH_BAIL'
+              ? `योर ऑनर, भारी ज़मानत रखकर मेरे क्लाइंट को बेल मंजूर की जाए।`
+              : `माई लॉर्ड, मेरे क्लाइंट को एक मौका और दिया जाए।`,
+      },
+      {
+        speakerRole: 'inspector',
+        speakerName: 'Inspector Vijay Rathore',
+        title: 'Prosecution Rebuttal',
+        text:
+          verdictKind === 'NO_BAIL'
+            ? `Sakht aitaraz Your Honour! Mulzim ne SWAT/Army aur kanoon par seedha hamla kiya hai — isko bahar chhodna shehar ke liye khatra hoga!`
+            : `Court sahab, shehar mein kanoon-vyavastha banaye rakhne ke liye is par bhari jurmana lagna zaroori hai.`,
+        tts:
+          verdictKind === 'NO_BAIL'
+            ? `सख्त ऐतराज़ योर ऑनर! मुल्ज़िम को बाहर छोड़ना शहर के लिए खतरा होगा, ज़मानत ख़ारिज करें!`
+            : `कोर्ट साहब, शहर में कानून-व्यवस्था के लिए भारी जुर्माना ज़रूरी है।`,
+      },
+      {
+        speakerRole: 'judge',
+        speakerName: 'Hon. Judge S.K. Deshmukh',
+        title: 'Final Court Order',
+        text:
+          verdictKind === 'BAILABLE'
+            ? `Sabhi pakshon ko sunne ke baad: ${formatRs(bailAmount)} Bail Bond aur ${formatRs(lawyerFee)} Vakil Fee par Zamanat Manzoor ki jaati hai!`
+            : verdictKind === 'HIGH_BAIL'
+              ? `Aaropon ki gambhirta dekhte hue: ${formatRs(bailAmount)} Bhari Zamanat + ${formatRs(lawyerFee)} Vakil Fee bharo, warna ${jailDays} din Bharat Central Jail!`
+              : `Sangeen aur gair-zamanati aarop saabit! Zamanat kharij! Mulzim ko seedha ${jailDays} din Bharat Central Jail bheja jaata hai!`,
+        tts:
+          verdictKind === 'BAILABLE'
+            ? `सभी पक्षों को सुनने के बाद ज़मानत मंजूर की जाती है!`
+            : verdictKind === 'HIGH_BAIL'
+              ? `आरोपों की गंभीरता देखते हुए भारी ज़मानत भरें, वरना जेल भेजा जाएगा!`
+              : `संगीन और गैर-ज़मानती आरोप! ज़मानत ख़ारिज! मुल्ज़िम को सीधा भारत सेंट्रल जेल भेजा जाता है!`,
+      },
+    ];
+
+    this.courtroomState = {
+      starsAtArrest,
+      arrestReason: reason,
+      charges,
+      confiscated: this.bustedConfiscated,
+      verdictKind,
+      verdictHeadline,
+      bailAmount,
+      lawyerFee,
+      totalDue: bailAmount + lawyerFee,
+      jailDays,
+      dialogueIndex: 0,
+      dialogueTurns,
+      argumentsFinished: false,
+    };
+    this.courtDialogueTimer = 0;
+    this.courtGavelTimer = 0.55;
+
+    // Position player standing inside wooden Kathgara facing Judge (-Z)
+    const kp = this.courtroomStage.kathgaraPos;
+    this.playerX = kp.x;
+    this.playerY = kp.y;
+    this.playerZ = kp.z;
+    this.playerYaw = 0;
+    this.playerRig.root.visible = true;
+    this.playerRig.helmetMesh.visible = false;
+    if (this.weaponMesh) this.weaponMesh.visible = false;
+    if (this.fpWeaponGroup) this.fpWeaponGroup.visible = false;
+    this.playerRig.root.position.set(kp.x, kp.y, kp.z);
+    this.playerRig.root.rotation.set(0, 0, 0);
+
+    this.setMode('COURTROOM');
+    soundEngine.playCourtGavel();
+    this.speakCurrentCourtTurn();
+  }
+
+  private speakCurrentCourtTurn(): void {
+    const cs = this.courtroomState;
+    if (!cs) return;
+    const turn = cs.dialogueTurns[cs.dialogueIndex];
+    if (!turn) return;
+    const role = turn.speakerRole === 'inspector' ? 'officer' : turn.speakerRole;
+    soundEngine.speakNpcLine(role, cs.dialogueIndex + 300, turn.tts);
+  }
+
+  public advanceCourtroomDialogue(): void {
+    const cs = this.courtroomState;
+    if (!cs || cs.argumentsFinished) return;
+    if (cs.dialogueIndex < cs.dialogueTurns.length - 1) {
+      cs.dialogueIndex += 1;
+      this.courtDialogueTimer = 0;
+      if (cs.dialogueIndex === cs.dialogueTurns.length - 1) {
+        cs.argumentsFinished = true;
+        this.courtGavelTimer = 0.55;
+        soundEngine.playCourtGavel();
+      } else {
+        soundEngine.playUiClick();
+      }
+      this.speakCurrentCourtTurn();
+      this.emitHudSnapshot();
+    } else {
+      cs.argumentsFinished = true;
+      this.courtGavelTimer = 0.55;
+      soundEngine.playCourtGavel();
+      this.emitHudSnapshot();
+    }
+  }
+
+  public skipCourtroomArguments(): void {
+    const cs = this.courtroomState;
+    if (!cs) return;
+    cs.dialogueIndex = cs.dialogueTurns.length - 1;
+    cs.argumentsFinished = true;
+    this.courtGavelTimer = 0.55;
+    soundEngine.playCourtGavel();
+    this.speakCurrentCourtTurn();
+    this.emitHudSnapshot();
+  }
+
+  public payCourtroomBail(source: 'cash' | 'bank'): { ok: boolean; message: string } {
+    const cs = this.courtroomState;
+    if (!cs || cs.verdictKind === 'NO_BAIL') {
+      return { ok: false, message: 'Is case mein zamanat kharij hai — seedha jail!' };
+    }
+    const due = cs.totalDue;
+    if (source === 'bank') {
+      this.syncBankInterest(true);
+      const bankSav = this.savingsPrincipal + this.savingsInterest;
+      if (bankSav < due) {
+        this.callbacks.onToast({
+          text: `Royal Bank Savings mein sirf ${formatRsExact(bankSav)} hai (${formatRs(due)} chahiye)`,
+          tone: 'warn',
+        });
+        return { ok: false, message: `Insufficient Royal Bank Savings balance (${formatRs(due)} required).` };
+      }
+      const ratio = due / Math.max(0.01, bankSav);
+      this.savingsInterest = Math.max(0, this.savingsInterest * (1 - ratio));
+      this.savingsPrincipal = Math.max(0, this.savingsPrincipal * (1 - ratio));
+      this.recordPassbook(
+        'SAVINGS',
+        'WITHDRAW',
+        due,
+        this.savingsPrincipal + this.savingsInterest,
+        `Court Bail & Vakil Fee (${cs.starsAtArrest}★ Case)`,
+      );
+    } else {
+      if (this.playerCash < due) {
+        this.callbacks.onToast({
+          text: `Wallet mein sirf ${formatRs(this.playerCash)} hai (${formatRs(due)} chahiye)`,
+          tone: 'warn',
+        });
+        return { ok: false, message: `Insufficient cash (need ${formatRs(due)}).` };
+      }
+      this.playerCash -= due;
+    }
+
+    this.courtroomState = null;
+    this.bustedLock = false;
+    soundEngine.playCashPickup();
+
+    const safePos = this.resolveCollisions(this.courtExitPos.x, this.courtExitPos.z, 0.5);
+    this.playerX = safePos.x;
+    this.playerY = 0;
+    this.playerZ = safePos.z;
+    this.playerYaw = 0;
+    this.camYaw = 0;
+    this.playerRig.helmetMesh.visible = this.hasHelmet && this.helmetOn;
+    this.playerRig.root.visible = !this.firstPerson;
+    this.playerRig.root.position.set(this.playerX, 0, this.playerZ);
+    this.refreshPlayerWeaponMesh();
+
+    this.saveGameState();
+    this.setMode('PLAYING');
+    this.callbacks.onToast({
+      text: `Zamanat Manzoor! -${formatRs(due)} (${source === 'bank' ? 'Royal Bank' : 'Cash'}) · Court ke baahar riha`,
+      tone: 'cash',
+    });
+    return { ok: true, message: `Paid ${formatRs(due)}. Released outside District Court!` };
+  }
+
+  public enterCentralJailFromCourt(): void {
+    const cs = this.courtroomState;
+    const stars = cs?.starsAtArrest ?? 2;
+    const sentenceDaysTotal = cs?.jailDays ?? 2;
+    this.courtroomState = null;
+    this.bustedLock = false;
+
+    // Escrow licensed weapons safely during prison stay (returned upon release/escape)
+    this.jailEscrowedWeapons = [];
+    this.jailEscrowedAmmo = {};
+    for (const wid of WEAPON_ORDER) {
+      if (wid === 'fists') continue;
+      if (this.ownedWeapons.has(wid)) {
+        this.jailEscrowedWeapons.push(wid);
+        this.jailEscrowedAmmo[wid] = this.ammo[wid];
+      }
+    }
+    this.ownedWeapons = new Set(['fists']);
+    this.activeWeapon = 'fists';
+    this.refreshPlayerWeaponMesh();
+
+    if (this.jailRig) {
+      this.disabledColliders.delete(this.jailRig.mainGateCollider);
+      this.disabledColliders.delete(this.jailRig.northGateCollider);
+      this.disabledColliders.delete(this.jailRig.eastGateCollider);
+      this.jailRig.mainGateDoor.position.y = 2.3;
+      this.jailRig.northGateDoor.position.y = 2.3;
+      this.jailRig.eastGateDoor.position.set(-150 + 21, 2.3, 150);
+      this.jailRig.eastGateDoor.rotation.y = 0;
+      this.playerX = this.jailRig.yardCenter.x;
+      this.playerY = 0.24;
+      this.playerZ = this.jailRig.yardCenter.z;
+    } else {
+      this.playerX = -150;
+      this.playerY = 0;
+      this.playerZ = 154;
+    }
+    this.playerYaw = 0;
+    this.camYaw = 0;
+    this.camPitch = 0.34;
+    this.playerRig.helmetMesh.visible = false;
+    this.playerRig.root.visible = !this.firstPerson;
+    this.playerRig.root.position.set(this.playerX, this.playerY, this.playerZ);
+
+    this.jailState = {
+      starsAtArrest: stars,
+      sentenceDaysTotal,
+      remainingDays: sentenceDaysTotal,
+      wardenBribeCost: stars >= 4 ? JAIL_WARDEN_BRIBE_HIGH_INR : JAIL_WARDEN_BRIBE_LOW_INR,
+      workCount: 0,
+      activeTaskKind: 'NONE',
+      taskTimer: 0,
+      taskDuration: 1,
+      taskStartX: this.playerX,
+      taskStartZ: this.playerZ,
+      spottedByGuard: false,
+      nearStation: null,
+      statusBanner: `Saza: ${sentenceDaysTotal} Din · 4 Clear Raste: [1] Bunk Skip, [2] Workshop Kaam, [3] Bribe Jailer, [4] East Gate Break!`,
+      spotCooldown: 0,
+    };
+
+    soundEngine.playJailDoorClang();
+    this.setMode('JAIL');
+    this.speakWithSubtitle(
+      'Jailer Mahendra Pal',
+      'warden',
+      920,
+      'Bharat Central Jail mein swagat hai! Saza poori karo, workshop mein kaam karo, ya kismat aazmao!',
+      'भारत सेंट्रल जेल में स्वागत है! सज़ा पूरी करो, वर्कशॉप में काम करो, या किस्मत आज़माओ!',
+    );
+  }
+
+  private releaseFromJail(exitMode: 'LEGAL' | 'BRIBE' | 'ESCAPE'): void {
+    const rig = this.jailRig;
+    // Restore escrowed licensed firearms
+    for (const wid of this.jailEscrowedWeapons) {
+      this.ownedWeapons.add(wid);
+      this.ammo[wid] = Math.max(this.ammo[wid], this.jailEscrowedAmmo[wid] ?? 0);
+    }
+    this.jailEscrowedWeapons = [];
+    this.jailEscrowedAmmo = {};
+    this.jailState = null;
+
+    this.playerY = 0;
+    this.playerVy = 0;
+    this.playerRig.helmetMesh.visible = this.hasHelmet && this.helmetOn;
+    this.playerRig.root.visible = !this.firstPerson;
+    this.refreshPlayerWeaponMesh();
+
+    if (exitMode === 'LEGAL') {
+      const target = rig ? rig.releaseOutsidePos : new THREE.Vector3(-150, 0, 178);
+      const pos = this.resolveCollisions(target.x, target.z, 0.5);
+      this.playerX = pos.x;
+      this.playerZ = pos.z;
+      this.playerYaw = Math.PI;
+      this.camYaw = Math.PI;
+      soundEngine.playJailDoorClang();
+      this.setMode('PLAYING');
+      this.callbacks.onToast({
+        text: 'Saza Poori! Bharat Central Jail se kanooni rihaai · Bank Interest jama hua (0★)',
+        tone: 'cash',
+      });
+    } else if (exitMode === 'BRIBE') {
+      // Slip out North Warden Gate late at night (23:30)
+      this.gameMinutes = 23 * 60 + 30;
+      this.dayCount += 1;
+      this.syncBankInterest(true);
+      this.applyTimeOfDayLighting();
+      const target = rig ? rig.bribeOutsidePos : new THREE.Vector3(-150, 0, 122);
+      const pos = this.resolveCollisions(target.x, target.z, 0.5);
+      this.playerX = pos.x;
+      this.playerZ = pos.z;
+      this.playerYaw = 0;
+      this.camYaw = 0;
+      soundEngine.playJailDoorClang();
+      this.setMode('PLAYING');
+      if (Math.random() < 0.35) {
+        this.setWantedLevelSafe(2);
+        this.callbacks.onToast({
+          text: 'Warden ne raat mein chhod diya, par watchtower alarm baj gaya! (2★)',
+          tone: 'warn',
+        });
+      } else {
+        this.callbacks.onToast({
+          text: 'Raat 11:30 PM ko Warden gate se chupchaap baahar nikal gaye! (0★)',
+          tone: 'cash',
+        });
+      }
+    } else {
+      // Prison Break through Weak East Gate!
+      if (rig) {
+        this.disabledColliders.add(rig.eastGateCollider);
+        rig.eastGateDoor.rotation.y = -Math.PI * 0.65;
+        rig.eastGateDoor.position.set(-150 + 22.8, 2.3, 151.8);
+      }
+      const target = rig ? rig.escapeOutsidePos : new THREE.Vector3(-121.5, 0, 150);
+      const pos = this.resolveCollisions(target.x, target.z, 0.5);
+      this.playerX = pos.x;
+      this.playerZ = pos.z;
+      this.playerYaw = -Math.PI / 2;
+      this.camYaw = -Math.PI / 2;
+      soundEngine.playPoliceWhistle();
+      this.setMode('PLAYING');
+      this.setWantedLevelSafe(3);
+      this.speakWithSubtitle(
+        'Jail Siren',
+        'narrator',
+        921,
+        'JAIL BREAK ALERT! Kaidi East Gate tod kar bhaag gaya! Sabhi SWAT units ghera daalo!',
+        'जेल ब्रेक अलर्ट! कैदी ईस्ट गेट तोड़कर भाग गया! सभी यूनिट्स घेरा डालो!',
+      );
+      this.callbacks.onToast({
+        text: 'PRISON BREAK! Aap jail tod kar bhaage — 3★ SWAT Chase Shuru!',
+        tone: 'warn',
+      });
+    }
+    this.playerRig.root.position.set(this.playerX, 0, this.playerZ);
+    this.saveGameState();
+    this.emitHudSnapshot();
+  }
+
+  public jailSkipSentence(): void {
+    if (this.mode !== 'JAIL' || !this.jailState) return;
+    const days = Math.max(1, Math.ceil(this.jailState.remainingDays));
+    this.dayCount += days;
+    this.gameMinutes = 8 * 60 + 30;
+    this.lastAartiSlot = -1;
+    this.lastAzaanSlot = -1;
+    this.syncBankInterest(true);
+    this.applyTimeOfDayLighting();
+    this.releaseFromJail('LEGAL');
+  }
+
+  public jailPerformWork(): void {
+    if (this.mode !== 'JAIL' || !this.jailState) return;
+    if (this.jailState.activeTaskKind !== 'NONE') return;
+    if (this.jailRig && Math.hypot(this.playerX - this.jailRig.workshopPos.x, this.playerZ - this.jailRig.workshopPos.z) > 3.6) {
+      this.playerX = this.jailRig.workshopPos.x;
+      this.playerZ = this.jailRig.workshopPos.z;
+      this.playerYaw = Math.PI;
+      this.camYaw = Math.PI;
+      this.playerRig.root.position.set(this.playerX, this.playerY, this.playerZ);
+    }
+    this.jailState.activeTaskKind = 'WORK';
+    this.jailState.taskTimer = 0;
+    this.jailState.taskDuration = 2.2;
+    this.jailState.taskStartX = this.playerX;
+    this.jailState.taskStartZ = this.playerZ;
+    this.jailState.statusBanner = 'Jail Workshop mein kaam chal raha hai (+₹2,000 & -50% Sentence)...';
+    soundEngine.playUiClick();
+    this.emitHudSnapshot();
+  }
+
+  public jailBribeWarden(source: 'cash' | 'bank'): { ok: boolean; message: string } {
+    if (this.mode !== 'JAIL' || !this.jailState) {
+      return { ok: false, message: 'Jail active nahi hai.' };
+    }
+    const cost = this.jailState.wardenBribeCost;
+    if (source === 'bank') {
+      this.syncBankInterest(true);
+      const savTotal = this.savingsPrincipal + this.savingsInterest;
+      if (savTotal < cost) {
+        this.callbacks.onToast({
+          text: `Bank Savings mein sirf ${formatRsExact(savTotal)} hai (${formatRs(cost)} chahiye)`,
+          tone: 'warn',
+        });
+        return { ok: false, message: `Need ${formatRs(cost)} in Royal Bank Savings.` };
+      }
+      const ratio = cost / Math.max(0.01, savTotal);
+      this.savingsInterest = Math.max(0, this.savingsInterest * (1 - ratio));
+      this.savingsPrincipal = Math.max(0, this.savingsPrincipal * (1 - ratio));
+      this.recordPassbook(
+        'SAVINGS',
+        'WITHDRAW',
+        cost,
+        this.savingsPrincipal + this.savingsInterest,
+        'Late-Night Settlement Transfer',
+      );
+    } else {
+      if (this.playerCash < cost) {
+        this.callbacks.onToast({
+          text: `Wallet mein sirf ${formatRs(this.playerCash)} hai (${formatRs(cost)} chahiye)`,
+          tone: 'warn',
+        });
+        return { ok: false, message: `Need ${formatRs(cost)} cash.` };
+      }
+      this.playerCash -= cost;
+    }
+
+    soundEngine.playCashPickup();
+    this.releaseFromJail('BRIBE');
+    return { ok: true, message: 'Warden ne gate khol diya!' };
+  }
+
+  public jailStartPrisonBreak(): void {
+    if (this.mode !== 'JAIL' || !this.jailState) return;
+    if (this.jailState.activeTaskKind !== 'NONE') return;
+    if (this.jailRig) {
+      const distGate = Math.hypot(
+        this.playerX - this.jailRig.escapePos.x,
+        this.playerZ - this.jailRig.escapePos.z,
+      );
+      if (distGate > 3.8) {
+        // Guide player toward East Gate visually instead of silently breaking from across yard
+        this.camYaw = -Math.PI / 2;
+        this.jailState.statusBanner =
+          'Pehle yellow Guard Vision Cones se bachkar RED Weak East Gate (→) par jaao, phir [E] dabao!';
+        soundEngine.playUiClick();
+        this.callbacks.onToast({
+          text: 'East Gate par pahunch kar [E] ya Break Lock dabao (Guard cones se bacho)!',
+          tone: 'info',
+        });
+        this.emitHudSnapshot();
+        return;
+      }
+    }
+    this.jailState.activeTaskKind = 'ESCAPE';
+    this.jailState.taskTimer = 0;
+    this.jailState.taskDuration = 3.0;
+    this.jailState.taskStartX = this.playerX;
+    this.jailState.taskStartZ = this.playerZ;
+    this.jailState.statusBanner = 'Weak East Gate ka taala tod rahe hain — Guard cone aaye to ruko/bhaago!';
+    soundEngine.playLockpickClick();
+    this.emitHudSnapshot();
+  }
+
+  public respawnAtThana(): void {
+    this.bustedLock = false;
+    this.performPartialWorldCleanup(false);
+
+    this.playerCash -= COURT_BAIL_FEE_INR;
+    if (this.playerCash <= BANK_DEBT_TRIGGER_INR) {
+      this.playerCash = BANK_BAILOUT_GRANT_INR;
+      this.spawnInsideBank();
+      this.saveGameState();
+      this.setMode('PAUSED');
+      this.speakWithSubtitle(
+        'Bank Officer',
+        'banker',
+        777,
+        'Aapka karz pachaas hazaar rupaye ho gaya. Police ke saath sadak ke kutton ko bachane ka mission karo — karz maaf aur das hazaar advance milenge.',
+      );
+      this.callbacks.onBankPrompt(true);
+      this.callbacks.onToast({
+        text: `Royal Bank Of India: Debt cleared to ₹0 + ${formatRs(BANK_BAILOUT_GRANT_INR)} advance!`,
+        tone: 'info',
+      });
+      return;
+    }
+
+    const spawnPos = this.resolveCollisions(this.courtExitPos.x, this.courtExitPos.z, 0.5);
+    this.playerX = spawnPos.x;
+    this.playerZ = spawnPos.z;
+    this.playerYaw = 0;
+    this.camYaw = 0;
+    this.playerRig.root.position.set(this.playerX, 0, this.playerZ);
+    this.playerRig.root.rotation.y = this.playerYaw;
+
+    this.saveGameState();
+    this.setMode('PLAYING');
+    this.callbacks.onToast({
+      text: `District Court Bail -${formatRs(COURT_BAIL_FEE_INR)} · Bank, Time & Parked Cars safe`,
+      tone: this.playerCash < 0 ? 'warn' : 'info',
+    });
+  }
+
+  public respawnAtHospital(): void {
+    // Partial Reset: restores player HP/stamina, clears road wrecks, restores hijacked cars, preserves Bank/FD & Day/Time.
+    this.wastedLock = false;
+    this.performPartialWorldCleanup(true);
 
     this.playerCash -= DEATH_FEE_INR;
 
@@ -2928,7 +3972,7 @@ export class GameEngine {
     this.saveGameState();
     this.setMode('PLAYING');
     this.callbacks.onToast({
-      text: `Hospital fee -${formatRs(DEATH_FEE_INR)} · All gear & stats kept`,
+      text: `Hospital bill -${formatRs(DEATH_FEE_INR)} · Bank, Time & Gear kept; Hijacked cars reset`,
       tone: this.playerCash < 0 ? 'warn' : 'info',
     });
   }
@@ -2992,7 +4036,16 @@ export class GameEngine {
       hitCooldowns: new Map(),
       occupiedByPlayer: false,
       aiEnabled: false,
+      aiDisabled: true,
       isStarterParked: true,
+      origX: carX,
+      origZ: carZ,
+      origYaw: carYaw,
+      origSpeed: 0,
+      origWasStarter: true,
+      origAxis: 'x',
+      origDir: 1,
+      origRoadCenter: -60,
       policeState: 'PATROL',
       maxOfficers: 1,
       spawnedOfficerIds: [],
@@ -3341,6 +4394,11 @@ export class GameEngine {
     this.nextPassbookId = 1;
     this.blessedTimer = 0;
     this.prayerAnim = null;
+    this.courtroomState = null;
+    this.jailState = null;
+    this.jailEscrowedWeapons = [];
+    this.jailEscrowedAmmo = {};
+    this.disabledColliders.clear();
     this.clearWaypoint(true);
     this.applyTimeOfDayLighting();
     this.updateSettings({ ...DEFAULT_SETTINGS });
@@ -3383,8 +4441,17 @@ export class GameEngine {
     this.swatKilledCount = 0;
     this.commandoKilledCount = 0;
     this.policeVehiclesDestroyed = 0;
+    this.crimeUnlicensedWeapon = false;
+    this.crimeTrafficViolations = 0;
+    this.crimeVehicleTheftCount = 0;
+    this.crimeStolePoliceCar = false;
+    this.crimeCivilianAssaults = 0;
     this.enforcementSpawnCooldown = 0;
     this.brandishExposeTimer = 0;
+    this.playerShotAtPolice = false;
+    this.surrenderHolding = false;
+    this.surrenderHoldTimer = 0;
+    this.corneredArrestTimer = 0;
 
     if (this.activeWitness) {
       const wNpc = this.npcs.find((n) => n.id === this.activeWitness!.npcId);
@@ -3426,7 +4493,12 @@ export class GameEngine {
       }
       if (n.isPolice) {
         n.hostile = false;
+        n.bribeRefused = false;
         n.fireCooldown = 1.4;
+        n.rig.lathiProp.visible = false;
+        for (const child of n.rig.weaponMount.children) {
+          if (child !== n.rig.lathiProp) child.visible = true;
+        }
       }
       return true;
     });
@@ -3504,13 +4576,22 @@ export class GameEngine {
     if (closest) {
       const wasStarterParked = Boolean(closest.isStarterParked);
       const alreadyClaimed = Boolean(closest.playerClaimed);
-      // Immediately disable AI driving permanently once player enters any vehicle
+      // Permanently disable autonomous AI driver once player enters this vehicle (until Wasted)
+      closest.aiDisabled = true;
       closest.aiEnabled = false;
       closest.occupiedByPlayer = true;
       closest.isStarterParked = false;
       closest.playerClaimed = true;
       closest.speed = 0;
       this.adsActive = false;
+
+      // Eject visible helmeted AI rider onto pavement when hijacking an occupied bike
+      if (closest.kind === 'bike' && closest.hasAiRider && closest.rig.riderRig) {
+        closest.rig.riderRig.root.visible = false;
+        closest.hasAiRider = false;
+        this.spawnEjectedBikeRider(closest);
+      }
+
       this.currentVehicle = closest;
       // Show seated rider + 3D helmet when mounting a motorcycle
       this.playerRig.root.visible = closest.kind === 'bike' ? !this.firstPerson : false;
@@ -3526,6 +4607,7 @@ export class GameEngine {
 
       if (isPoliceVehicle && closest.id !== this.missionPoliceCarId) {
         // Stealing a police vehicle immediately gives >= 1★ wanted level
+        this.crimeStolePoliceCar = true;
         this.registerCrime('steal_police_vehicle');
       } else if (
         !wasStarterParked &&
@@ -3534,6 +4616,7 @@ export class GameEngine {
         !this.noPoliceCheat &&
         this.wantedLevel === 0
       ) {
+        this.crimeVehicleTheftCount += 1;
         // Civilian car/auto/bike: 0★ by default — ONLY wanted if a foot cop directly sees it OR witness completes 100 call
         let sawCop: NpcEntity | null = null;
         let minCopD = 28;
@@ -3568,6 +4651,64 @@ export class GameEngine {
       soundEngine.playUiClick();
       this.emitHudSnapshot();
     }
+  }
+
+  private spawnEjectedBikeRider(bike: VehicleEntity): void {
+    const id = this.nextEntityId++;
+    const rightX = Math.cos(bike.yaw);
+    const rightZ = -Math.sin(bike.yaw);
+    const ejectPos = this.resolveCollisions(bike.x + rightX * 1.45, bike.z + rightZ * 1.45, 0.45);
+    const rig = createHumanoidModel({
+      shirtColor: 0x334155,
+      pantsColor: 0x1e2430,
+      skinColor: 0xc98b63,
+      outfitStyle: 'casual',
+    });
+    // Bike rider ALWAYS wears an ISI helmet even as he is thrown off
+    rig.helmetMesh.visible = true;
+    rig.root.position.set(ejectPos.x, 0, ejectPos.z);
+    rig.root.rotation.y = bike.yaw;
+    this.scene.add(rig.root);
+
+    const riderName = pickName(INDIAN_CITIZEN_NAMES, id);
+    this.npcs.push({
+      id,
+      name: riderName,
+      rig,
+      x: ejectPos.x,
+      z: ejectPos.z,
+      yaw: normalizeAngle(bike.yaw + Math.PI * 0.5),
+      vx: rightX * 6.4,
+      vz: rightZ * 6.4,
+      hp: 85,
+      maxHp: 85,
+      knockbackResist: 0.5,
+      walkPhase: 0,
+      staggerTimer: 1.4,
+      wanderTimer: 2,
+      targetYaw: normalizeAngle(bike.yaw + Math.PI),
+      isEnforcer: false,
+      isPolice: false,
+      hostile: false,
+      aggressiveOnHit: false,
+      fireCooldown: 1.2,
+      meleeCooldown: 1.0,
+      punchAnimTimer: 0,
+      dead: false,
+      deathTimer: 0,
+      alertedTimer: 8.5,
+      greetCooldown: 10,
+      chaiCompanionTarget: null,
+    });
+
+    soundEngine.playPunch(true);
+    this.speakWithSubtitle(
+      riderName,
+      'citizen',
+      id,
+      'Oye! Meri bike chhor! Chor!',
+      'ओये! मेरी बाइक छोड़! चोर!',
+    );
   }
 
   private getVehicleHitDistance(
@@ -3938,7 +5079,7 @@ export class GameEngine {
 
   private speakWithSubtitle(
     speaker: string,
-    role: 'officer' | 'enforcer' | 'dealer' | 'citizen' | 'banker' | 'narrator',
+    role: 'officer' | 'enforcer' | 'dealer' | 'citizen' | 'banker' | 'narrator' | 'judge' | 'lawyer' | 'warden',
     seedId: number,
     displayText: string,
     ttsText?: string,
@@ -4471,7 +5612,13 @@ export class GameEngine {
   ): void {
     if (this.noPoliceCheat || this.missionPhase !== 'NONE') return;
 
+    if (kind === 'unlicensed_weapon') this.crimeUnlicensedWeapon = true;
+    else if (kind === 'traffic_violation') this.crimeTrafficViolations += 1;
+    else if (kind === 'steal_police_vehicle') this.crimeStolePoliceCar = true;
+    else if (kind === 'assault_civilian') this.crimeCivilianAssaults += 1;
+
     if (kind === 'attack_police') {
+      this.playerShotAtPolice = true;
       // Attacking police jumps straight to 2★ Armed Squad (or triggers escalation evaluation above 2★)
       if (this.policeInspection) {
         this.policeInspection = null;
@@ -4482,6 +5629,7 @@ export class GameEngine {
     }
 
     if (kind === 'destroy_police_vehicle') {
+      this.playerShotAtPolice = true;
       const next = this.wantedLevel >= 2 ? 3 : 2;
       this.setWantedLevelSafe(next);
       this.evaluateWantedEscalation();
@@ -4760,6 +5908,15 @@ export class GameEngine {
       hitCooldowns: new Map(),
       occupiedByPlayer: false,
       aiEnabled: true,
+      aiDisabled: false,
+      origX: pos.x,
+      origZ: pos.z,
+      origYaw: yaw,
+      origSpeed: 9.5,
+      origWasStarter: false,
+      origAxis: 'z',
+      origDir: 1,
+      origRoadCenter: 0,
       policeState: 'APPROACH',
       maxOfficers: 2,
       spawnedOfficerIds: [],
@@ -5127,34 +6284,51 @@ export class GameEngine {
     let rx = clamp(x, -WORLD_LIMIT, WORLD_LIMIT);
     let rz = clamp(z, -WORLD_LIMIT, WORLD_LIMIT);
 
-    for (const c of this.colliders) {
-      const closestX = clamp(rx, c.minX, c.maxX);
-      const closestZ = clamp(rz, c.minZ, c.maxZ);
-      const dx = rx - closestX;
-      const dz = rz - closestZ;
-      const distSq = dx * dx + dz * dz;
-      if (distSq < radius * radius) {
-        const dist = Math.sqrt(distSq);
-        if (dist > 0.0001) {
-          const push = radius - dist;
-          rx += (dx / dist) * push;
-          rz += (dz / dist) * push;
-        } else {
-          // Inside AABB fallback: push out along shallowest axis
-          const dLeft = Math.abs(rx - c.minX);
-          const dRight = Math.abs(c.maxX - rx);
-          const dTop = Math.abs(rz - c.minZ);
-          const dBottom = Math.abs(c.maxZ - rz);
-          const minD = Math.min(dLeft, dRight, dTop, dBottom);
-          if (minD === dLeft) rx = c.minX - radius;
-          else if (minD === dRight) rx = c.maxX + radius;
-          else if (minD === dTop) rz = c.minZ - radius;
-          else rz = c.maxZ + radius;
+    // 60m Spatial Hash Grid Lookup (replaces scanning 400+ static colliders every call)
+    const pad = radius + 2.0;
+    const gx0 = Math.floor((rx - pad) / COLLIDER_CELL_SIZE);
+    const gx1 = Math.floor((rx + pad) / COLLIDER_CELL_SIZE);
+    const gz0 = Math.floor((rz - pad) / COLLIDER_CELL_SIZE);
+    const gz1 = Math.floor((rz + pad) / COLLIDER_CELL_SIZE);
+    this._visitedColliders.clear();
+
+    for (let gx = gx0; gx <= gx1; gx++) {
+      for (let gz = gz0; gz <= gz1; gz++) {
+        const bucket = this.colliderGrid.get(`${gx},${gz}`);
+        if (!bucket) continue;
+        for (let i = 0; i < bucket.length; i++) {
+          const c = bucket[i];
+          if (this._visitedColliders.has(c) || this.disabledColliders.has(c)) continue;
+          this._visitedColliders.add(c);
+          const closestX = clamp(rx, c.minX, c.maxX);
+          const closestZ = clamp(rz, c.minZ, c.maxZ);
+          const dx = rx - closestX;
+          const dz = rz - closestZ;
+          const distSq = dx * dx + dz * dz;
+          if (distSq < radius * radius) {
+            const dist = Math.sqrt(distSq);
+            if (dist > 0.0001) {
+              const push = radius - dist;
+              rx += (dx / dist) * push;
+              rz += (dz / dist) * push;
+            } else {
+              const dLeft = Math.abs(rx - c.minX);
+              const dRight = Math.abs(c.maxX - rx);
+              const dTop = Math.abs(rz - c.minZ);
+              const dBottom = Math.abs(c.maxZ - rz);
+              const minD = Math.min(dLeft, dRight, dTop, dBottom);
+              if (minD === dLeft) rx = c.minX - radius;
+              else if (minD === dRight) rx = c.maxX + radius;
+              else if (minD === dTop) rz = c.minZ - radius;
+              else rz = c.maxZ + radius;
+            }
+          }
         }
       }
     }
 
     for (const cc of this.circleColliders) {
+      if (Math.abs(rx - cc.x) > cc.radius + radius + 0.5 || Math.abs(rz - cc.z) > cc.radius + radius + 0.5) continue;
       const dx = rx - cc.x;
       const dz = rz - cc.z;
       const minD = cc.radius + radius;
@@ -5172,13 +6346,14 @@ export class GameEngine {
     if (!skipVehicles) {
       for (const v of this.vehicles) {
         if (v.id === ignoreVehicleId) continue;
+        if (Math.abs(rx - v.x) > 4.5 || Math.abs(rz - v.z) > 4.5) continue;
         const halfW = v.kind === 'bike' ? 0.42 : v.kind === 'rickshaw' ? 0.85 : 1.12;
         const halfL = v.kind === 'bike' ? 1.05 : v.kind === 'rickshaw' ? 1.52 : 2.32;
         const pushed = this.pushCircleOutOfOrientedBox(rx, rz, radius, v.x, v.z, v.yaw, halfW, halfL);
         rx = pushed.x;
         rz = pushed.z;
       }
-      if (this.rescueVan) {
+      if (this.rescueVan && Math.abs(rx - this.rescueVanPos.x) <= 5 && Math.abs(rz - this.rescueVanPos.z) <= 5) {
         const pushed = this.pushCircleOutOfOrientedBox(
           rx,
           rz,
@@ -5198,18 +6373,21 @@ export class GameEngine {
   }
 
   private raycastBuildings(ox: number, oz: number, dx: number, dz: number, maxDist: number): number {
-    let best = maxDist;
-    const step = 1.2;
+    const step = 1.25;
     for (let t = 1.0; t < maxDist; t += step) {
       const px = ox + dx * t;
       const pz = oz + dz * t;
-      for (const c of this.colliders) {
+      const bucket = this.colliderGrid.get(`${Math.floor(px / COLLIDER_CELL_SIZE)},${Math.floor(pz / COLLIDER_CELL_SIZE)}`);
+      if (!bucket) continue;
+      for (let i = 0; i < bucket.length; i++) {
+        const c = bucket[i];
+        if (this.disabledColliders.has(c)) continue;
         if (px >= c.minX && px <= c.maxX && pz >= c.minZ && pz <= c.maxZ) {
           return t;
         }
       }
     }
-    return best;
+    return maxDist;
   }
 
   // --- Main Loop ---
@@ -5224,10 +6402,18 @@ export class GameEngine {
     if (this.mode === 'PLAYING') {
       const simDt = this.weaponWheelOpen ? rawDt * 0.16 : rawDt;
       this.stepSimulation(simDt);
+      this.updateDynamicInteriorLight();
+    } else if (this.mode === 'COURTROOM') {
+      this.stepCourtroom(rawDt);
+      this.updateDynamicInteriorLight();
+    } else if (this.mode === 'JAIL') {
+      this.stepJail(rawDt);
+      this.updateDynamicInteriorLight();
     } else if (this.mode === 'TITLE') {
       // Gentle cinematic camera orbit on Title Screen
       this.camYaw += rawDt * 0.14;
       this.updateCamera(rawDt);
+      this.updateDynamicInteriorLight();
     }
 
     this.renderer.render(this.scene, this.camera);
@@ -5287,6 +6473,9 @@ export class GameEngine {
     for (const sig of this.trafficSignals) {
       const ns = this.getSignalAxisState(sig, 'z');
       const ew = this.getSignalAxisState(sig, 'x');
+      const prev = this.signalStateCache.get(sig.id);
+      if (prev && prev.ns === ns && prev.ew === ew) continue;
+      this.signalStateCache.set(sig.id, { ns, ew });
       for (const m of sig.nsRedMats) m.emissiveIntensity = ns === 'RED' ? 2.8 : 0.08;
       for (const m of sig.nsYellowMats) m.emissiveIntensity = ns === 'YELLOW' ? 2.8 : 0.08;
       for (const m of sig.nsGreenMats) m.emissiveIntensity = ns === 'GREEN' ? 2.8 : 0.08;
@@ -5465,29 +6654,7 @@ export class GameEngine {
     if (!this.scene || !this.sunLight || !this.hemiLight || !this.rimLight) return;
 
     const m = this.gameMinutes;
-    // Keyframes over 24h (minutes): skyHex, sunHex, sunInt, hemiSkyHex, hemiInt, fogDensity, nightLampInt, exposure
-    const stops: {
-      min: number;
-      sky: number;
-      sun: number;
-      sunInt: number;
-      hemi: number;
-      hemiInt: number;
-      fog: number;
-      lamp: number;
-      exp: number;
-    }[] = [
-      { min: 0, sky: 0x09101d, sun: 0x6488ea, sunInt: 0.58, hemi: 0x3b4d78, hemiInt: 0.42, fog: 0.0046, lamp: 1.85, exp: 0.96 },
-      { min: 300, sky: 0x162038, sun: 0x8ea4d8, sunInt: 0.65, hemi: 0x52648f, hemiInt: 0.48, fog: 0.0044, lamp: 1.5, exp: 0.99 },
-      { min: 420, sky: 0xd98a5f, sun: 0xffd2a0, sunInt: 1.45, hemi: 0xfdcba0, hemiInt: 0.68, fog: 0.0038, lamp: 0.55, exp: 1.08 },
-      { min: 540, sky: 0x5c9ce0, sun: 0xffefd2, sunInt: 1.95, hemi: 0xaad4ff, hemiInt: 0.82, fog: 0.0032, lamp: 0.1, exp: 1.14 },
-      { min: 760, sky: 0x4ba0ea, sun: 0xfff8ea, sunInt: 2.25, hemi: 0xc2e2ff, hemiInt: 0.92, fog: 0.0029, lamp: 0.05, exp: 1.18 },
-      { min: 990, sky: 0x66a3dd, sun: 0xffe9c7, sunInt: 1.9, hemi: 0xb0d3f5, hemiInt: 0.82, fog: 0.0032, lamp: 0.15, exp: 1.14 },
-      { min: 1110, sky: 0xc96c45, sun: 0xfb923c, sunInt: 1.35, hemi: 0xf09d6c, hemiInt: 0.64, fog: 0.0039, lamp: 1.1, exp: 1.06 },
-      { min: 1200, sky: 0x181c30, sun: 0x7c8cc4, sunInt: 0.72, hemi: 0x4a5580, hemiInt: 0.48, fog: 0.0045, lamp: 1.75, exp: 0.98 },
-      { min: 1440, sky: 0x09101d, sun: 0x6488ea, sunInt: 0.58, hemi: 0x3b4d78, hemiInt: 0.42, fog: 0.0046, lamp: 1.85, exp: 0.96 },
-    ];
-
+    const stops = TIME_LIGHT_STOPS;
     let a = stops[0];
     let b = stops[1];
     for (let i = 0; i < stops.length - 1; i++) {
@@ -5500,27 +6667,275 @@ export class GameEngine {
     const span = Math.max(1, b.min - a.min);
     const t = clamp((m - a.min) / span, 0, 1);
 
-    const skyCol = new THREE.Color(a.sky).lerp(new THREE.Color(b.sky), t);
+    this._tmpColorA.setHex(a.sky);
+    this._tmpColorB.setHex(b.sky);
+    this._tmpColorA.lerp(this._tmpColorB, t);
     if (this.scene.background instanceof THREE.Color) {
-      this.scene.background.copy(skyCol);
+      this.scene.background.copy(this._tmpColorA);
     } else {
-      this.scene.background = skyCol;
+      this.scene.background = this._tmpColorA.clone();
     }
     if (this.scene.fog instanceof THREE.FogExp2) {
-      this.scene.fog.color.copy(skyCol);
+      this.scene.fog.color.copy(this._tmpColorA);
       this.scene.fog.density = THREE.MathUtils.lerp(a.fog, b.fog, t);
     }
 
-    this.sunLight.color.copy(new THREE.Color(a.sun).lerp(new THREE.Color(b.sun), t));
+    this._tmpColorA.setHex(a.sun);
+    this._tmpColorB.setHex(b.sun);
+    this.sunLight.color.copy(this._tmpColorA.lerp(this._tmpColorB, t));
     this.sunLight.intensity = THREE.MathUtils.lerp(a.sunInt, b.sunInt, t);
-    this.hemiLight.color.copy(new THREE.Color(a.hemi).lerp(new THREE.Color(b.hemi), t));
+
+    this._tmpColorA.setHex(a.hemi);
+    this._tmpColorB.setHex(b.hemi);
+    this.hemiLight.color.copy(this._tmpColorA.lerp(this._tmpColorB, t));
     this.hemiLight.intensity = THREE.MathUtils.lerp(a.hemiInt, b.hemiInt, t);
+
     this.rimLight.intensity = THREE.MathUtils.lerp(0.28, 0.52, clamp(this.sunLight.intensity / 2.2, 0, 1));
     this.renderer.toneMappingExposure = THREE.MathUtils.lerp(a.exp, b.exp, t);
 
     const lampIntensity = THREE.MathUtils.lerp(a.lamp, b.lamp, t);
-    for (const mat of this.nightEmissiveMats) {
-      mat.emissiveIntensity = lampIntensity;
+    if (Math.abs(lampIntensity - this.lastLampIntensity) > 0.025) {
+      this.lastLampIntensity = lampIntensity;
+      for (const mat of this.nightEmissiveMats) {
+        mat.emissiveIntensity = lampIntensity;
+      }
+    }
+  }
+
+  private updateDynamicInteriorLight(): void {
+    if (!this.interiorLight) return;
+    if (this.mode === 'COURTROOM' && this.courtroomStage) {
+      this.interiorLight.position.copy(this.courtroomStage.lightAnchor);
+      this.interiorLight.color.setHex(0xffedd5);
+      this.interiorLight.intensity = 3.2;
+      this.interiorLight.distance = 32;
+      return;
+    }
+    if (this.mode === 'JAIL') {
+      this.interiorLight.position.set(-150, 12, 150);
+      this.interiorLight.color.setHex(0xfffbeb);
+      this.interiorLight.intensity = 3.4;
+      this.interiorLight.distance = 48;
+      return;
+    }
+    let best: InteriorLightSpot | null = null;
+    let bestD = 42;
+    for (const spot of this.interiorLightSpots) {
+      const d = Math.hypot(spot.x - this.playerX, spot.z - this.playerZ);
+      if (d < bestD) {
+        bestD = d;
+        best = spot;
+      }
+    }
+    if (best) {
+      this.interiorLight.position.set(best.x, best.y, best.z);
+      this.interiorLight.color.setHex(best.color);
+      this.interiorLight.intensity = best.intensity;
+      this.interiorLight.distance = best.distance;
+    } else {
+      this.interiorLight.intensity = 0;
+    }
+  }
+
+  private stepCourtroom(dt: number): void {
+    const stage = this.courtroomStage;
+    const cs = this.courtroomState;
+    if (!stage || !cs) return;
+
+    stage.fanGroup.rotation.y += dt * 4.5;
+    if (this.courtGavelTimer > 0) {
+      this.courtGavelTimer = Math.max(0, this.courtGavelTimer - dt);
+      stage.judgeRig.rightArm.rotation.x = Math.sin((this.courtGavelTimer / 0.55) * Math.PI * 2) * 0.95;
+    } else {
+      stage.judgeRig.rightArm.rotation.x = 0.25;
+    }
+
+    const turn = cs.dialogueTurns[cs.dialogueIndex];
+    const tNow = performance.now() * 0.005;
+    stage.lawyerRig.rightArm.rotation.x = turn?.speakerRole === 'lawyer' ? 0.6 + Math.sin(tNow) * 0.35 : 0;
+    stage.inspectorRig.rightArm.rotation.x = turn?.speakerRole === 'inspector' ? 0.6 + Math.sin(tNow) * 0.35 : 0;
+
+    // Frame active speaker smoothly in the courtroom
+    const cx = stage.root.position.x;
+    const cz = stage.root.position.z;
+    if (turn?.speakerRole === 'lawyer') {
+      this._camDesired.set(cx + 1.2, 2.3, cz + 2.8);
+      this._camTarget.set(cx - 3.6, 1.45, cz - 0.5);
+    } else if (turn?.speakerRole === 'inspector') {
+      this._camDesired.set(cx - 1.2, 2.3, cz + 2.8);
+      this._camTarget.set(cx + 3.6, 1.45, cz - 0.5);
+    } else {
+      this._camDesired.set(cx + Math.sin(tNow * 0.14) * 1.1, 2.85, cz + 5.6);
+      this._camTarget.set(cx, 1.85, cz - 3.4);
+    }
+    this.camera.position.lerp(this._camDesired, 1 - Math.exp(-5 * dt));
+    this.camera.lookAt(this._camTarget);
+
+    // Auto-advance arguments smoothly if user watches without clicking
+    if (!cs.argumentsFinished) {
+      this.courtDialogueTimer += dt;
+      if (this.courtDialogueTimer >= 5.2) {
+        this.advanceCourtroomDialogue();
+      }
+    }
+  }
+
+  private stepJail(dt: number): void {
+    const js = this.jailState;
+    const rig = this.jailRig;
+    if (!js || !rig) return;
+
+    this.stepTimeOfDay(dt);
+    if (js.spotCooldown > 0) js.spotCooldown = Math.max(0, js.spotCooldown - dt);
+
+    // Arrow keys look inside jail
+    if (this.keys.has('ArrowLeft')) this.camYaw = normalizeAngle(this.camYaw + 2.0 * dt);
+    if (this.keys.has('ArrowRight')) this.camYaw = normalizeAngle(this.camYaw - 2.0 * dt);
+
+    this.stepPlayer(dt);
+    this.playerY = Math.max(0.24, this.playerY);
+    this.playerRig.root.position.y = this.playerY;
+
+    const nearEastGateZone =
+      Math.hypot(this.playerX - rig.escapePos.x, this.playerZ - rig.escapePos.z) < 6.0;
+
+    // Update patrolling prison guards & 3D translucent vision cones (only alarm near East Gate / during Break)
+    let spottedNow = false;
+    for (const g of rig.guards) {
+      const targetWp = g.waypoints[g.wpIndex];
+      const dx = targetWp.x - g.x;
+      const dz = targetWp.z - g.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist < 0.45) {
+        g.wpIndex = (g.wpIndex + 1) % g.waypoints.length;
+      } else {
+        const speed = 2.4;
+        const desiredYaw = Math.atan2(-dx, -dz);
+        g.yaw = lerpAngle(g.yaw, desiredYaw, 1 - Math.exp(-7 * dt));
+        g.x += (dx / dist) * speed * dt;
+        g.z += (dz / dist) * speed * dt;
+      }
+      g.rig.root.position.set(g.x, 0.24, g.z);
+      g.rig.root.rotation.y = g.yaw;
+      const swing = Math.sin(performance.now() * 0.008) * 0.45;
+      g.rig.leftLeg.rotation.x = swing;
+      g.rig.rightLeg.rotation.x = -swing;
+
+      const toPx = this.playerX - g.x;
+      const toPz = this.playerZ - g.z;
+      const dP = Math.hypot(toPx, toPz);
+      let seesPlayer = false;
+      if (dP < 7.8) {
+        const gFwdX = -Math.sin(g.yaw);
+        const gFwdZ = -Math.cos(g.yaw);
+        const dot = (toPx / Math.max(0.01, dP)) * gFwdX + (toPz / Math.max(0.01, dP)) * gFwdZ;
+        if (dot > Math.cos((36 * Math.PI) / 180)) {
+          seesPlayer = true;
+        }
+      }
+      const alertVisual = seesPlayer && (nearEastGateZone || js.activeTaskKind === 'ESCAPE');
+      const coneMat = g.coneMesh.material as THREE.MeshBasicMaterial;
+      if (alertVisual) {
+        spottedNow = true;
+        coneMat.color.setHex(0xef4444);
+        coneMat.opacity = 0.36;
+      } else {
+        coneMat.color.setHex(0xfef08a);
+        coneMat.opacity = 0.22;
+      }
+    }
+    js.spottedByGuard = spottedNow;
+
+    // Proximity checks for the 4 jail stations
+    js.nearStation = null;
+    if (Math.hypot(this.playerX - rig.bunkPos.x, this.playerZ - rig.bunkPos.z) < 3.6) {
+      js.nearStation = 'BUNK';
+    } else if (Math.hypot(this.playerX - rig.workshopPos.x, this.playerZ - rig.workshopPos.z) < 3.6) {
+      js.nearStation = 'WORKSHOP';
+    } else if (Math.hypot(this.playerX - rig.wardenPos.x, this.playerZ - rig.wardenPos.z) < 3.6) {
+      js.nearStation = 'WARDEN';
+    } else if (Math.hypot(this.playerX - rig.escapePos.x, this.playerZ - rig.escapePos.z) < 3.8) {
+      js.nearStation = 'ESCAPE_GATE';
+    }
+
+    // Active task progress (WORK or ESCAPE)
+    if (js.activeTaskKind !== 'NONE') {
+      const movedAway =
+        Math.hypot(this.playerX - js.taskStartX, this.playerZ - js.taskStartZ) > 1.5;
+      if (js.activeTaskKind === 'ESCAPE' && spottedNow && js.spotCooldown <= 0) {
+        js.activeTaskKind = 'NONE';
+        js.taskTimer = 0;
+        js.spotCooldown = 2.0;
+        soundEngine.playPoliceWhistle();
+        const safePos = this.resolveCollisions(rig.yardCenter.x, rig.yardCenter.z, 0.5);
+        this.playerX = safePos.x;
+        this.playerZ = safePos.z;
+        this.playerRig.root.position.set(this.playerX, this.playerY, this.playerZ);
+        js.statusBanner = 'Guard ne East Gate par dekh liya! Guard cone mudne ke baad dobara try karo!';
+        this.callbacks.onToast({
+          text: 'Guard Cone ne East Gate par pakad liya! Yellow cone hatne par lock todo.',
+          tone: 'warn',
+        });
+      } else if (movedAway) {
+        js.activeTaskKind = 'NONE';
+        js.taskTimer = 0;
+        js.statusBanner = 'Task ruk gaya — jagah se 1.5m door chale gaye.';
+      } else {
+        js.taskTimer += dt;
+        if (js.taskTimer >= js.taskDuration) {
+          const doneKind = js.activeTaskKind;
+          js.activeTaskKind = 'NONE';
+          js.taskTimer = 0;
+          if (doneKind === 'WORK') {
+            js.workCount += 1;
+            this.playerCash += JAIL_WORK_WAGE_INR;
+            js.remainingDays = Math.max(0, js.remainingDays * 0.5 - 0.18);
+            soundEngine.playCashPickup();
+            if (js.remainingDays <= 0.12) {
+              this.callbacks.onToast({
+                text: `Workshop Kaam +${formatRs(JAIL_WORK_WAGE_INR)} · Achhe vyavhaar se Saza Poori!`,
+                tone: 'cash',
+              });
+              this.releaseFromJail('LEGAL');
+              return;
+            }
+            js.statusBanner = `Workshop Complete: +${formatRs(JAIL_WORK_WAGE_INR)} mila & saza aadhi hui (${js.remainingDays.toFixed(2)}d baaki)!`;
+            this.callbacks.onToast({
+              text: `Jail Work Complete: +${formatRs(JAIL_WORK_WAGE_INR)} · Bachi Saza kam hui!`,
+              tone: 'cash',
+            });
+            this.saveGameState();
+          } else if (doneKind === 'ESCAPE') {
+            this.releaseFromJail('ESCAPE');
+            return;
+          }
+        }
+      }
+    }
+
+    // Gentle sentence countdown in real time as days advance
+    js.remainingDays = Math.max(0, js.remainingDays - (this.timeSpeedMinPerSec * dt) / 1440);
+    if (js.remainingDays <= 0.01) {
+      this.releaseFromJail('LEGAL');
+      return;
+    }
+
+    const sunAngle = ((this.gameMinutes - 360) / 720) * Math.PI;
+    const isDayArc = this.gameMinutes >= 360 && this.gameMinutes <= 1110;
+    this.sunLight.position.set(
+      Math.round(this.playerX / 2) * 2 + (isDayArc ? Math.cos(sunAngle) * 85 : -35),
+      isDayArc ? Math.max(24, Math.sin(clamp(sunAngle, 0.08, Math.PI - 0.08)) * 96) : 78,
+      Math.round(this.playerZ / 2) * 2 + (isDayArc ? 38 : -42),
+    );
+    this.sunLight.target.position.set(Math.round(this.playerX / 2) * 2, 0, Math.round(this.playerZ / 2) * 2);
+    this.sunLight.target.updateMatrixWorld();
+
+    this.updateCamera(dt);
+
+    this.hudAccum += dt;
+    if (this.hudAccum >= 0.1) {
+      this.hudAccum = 0;
+      this.emitHudSnapshot();
     }
   }
 
@@ -5611,6 +7026,22 @@ export class GameEngine {
 
     // Smooth Day-Noon-Midnight progression
     this.stepTimeOfDay(dt);
+
+    // Hold [H] Surrender progress at ANY 1-5★ wanted level
+    if (this.surrenderHolding) {
+      if (this.wantedLevel < 1 || this.missionPhase !== 'NONE') {
+        this.surrenderHolding = false;
+        this.surrenderHoldTimer = 0;
+      } else {
+        this.surrenderHoldTimer += dt;
+        if (this.surrenderHoldTimer >= 0.65) {
+          this.surrenderHolding = false;
+          this.surrenderHoldTimer = 0;
+          this.triggerBusted('Aapne police ke saamne haath upar karke surrender kar diya!');
+          return;
+        }
+      }
+    }
 
     // Darshan / Prayer animation countdown
     if (this.prayerAnim) {
@@ -5774,17 +7205,20 @@ export class GameEngine {
 
     this.updateCamera(dt);
 
-    // Keep shadow frustum centered on player with natural sun arc from East (+X) to West (-X)
+    // Keep shadow frustum snapped to 2m grid around player to eliminate shadow shimmer
     const sunAngle = ((this.gameMinutes - 360) / 720) * Math.PI;
     const isDayArc = this.gameMinutes >= 360 && this.gameMinutes <= 1110;
     const arcX = isDayArc ? Math.cos(sunAngle) * 85 : -35;
     const arcY = isDayArc ? Math.max(24, Math.sin(clamp(sunAngle, 0.08, Math.PI - 0.08)) * 96) : 78;
     const arcZ = isDayArc ? 38 : -42;
-    this.sunLight.position.set(this.playerX + arcX, arcY, this.playerZ + arcZ);
-    this.sunLight.target.position.set(this.playerX, 0, this.playerZ);
+    const snapPx = Math.round(this.playerX / 2) * 2;
+    const snapPz = Math.round(this.playerZ / 2) * 2;
+    this.sunLight.position.set(snapPx + arcX, arcY, snapPz + arcZ);
+    this.sunLight.target.position.set(snapPx, 0, snapPz);
+    this.sunLight.target.updateMatrixWorld();
 
     this.hudAccum += dt;
-    if (this.hudAccum >= 0.08) {
+    if (this.hudAccum >= 0.11) {
       this.hudAccum = 0;
       this.emitHudSnapshot();
     }
@@ -6166,7 +7600,7 @@ export class GameEngine {
       }
 
       if (!v.occupiedByPlayer) {
-        if (v.id === this.missionPoliceCarId || v.isStarterParked || !v.aiEnabled) {
+        if (v.id === this.missionPoliceCarId || v.isStarterParked || v.aiDisabled || !v.aiEnabled) {
           // Exited/stolen/parked vehicles have AI permanently off — roll smoothly to a complete stop
           v.speed *= Math.exp(-3.8 * dt);
           if (Math.abs(v.speed) < 0.25) v.speed = 0;
@@ -6296,11 +7730,12 @@ export class GameEngine {
         }
       }
 
-      // Speed & momentum-based Vehicle -> NPC collisions (both player-driven & AI traffic)
+      // Speed & momentum-based Vehicle -> NPC collisions (5m fast AABB early-out)
       for (const npc of this.npcs) {
         if (npc.dead) continue;
         const dx = npc.x - v.x;
         const dz = npc.z - v.z;
+        if (Math.abs(dx) > 5 || Math.abs(dz) > 5) continue;
         const dist = Math.hypot(dx, dz);
         if (dist < hitRadius) {
           const nx = dist > 0.01 ? dx / dist : Math.cos(v.yaw);
@@ -6323,6 +7758,7 @@ export class GameEngine {
       // Vehicle -> Street Dog impact
       for (const dog of this.streetDogs) {
         if (dog.dead || dog.hitCooldown > 0) continue;
+        if (Math.abs(dog.x - v.x) > 5 || Math.abs(dog.z - v.z) > 5) continue;
         const dist = Math.hypot(dog.x - v.x, dog.z - v.z);
         if (dist < hitRadius && impactSpeed > 5.2) {
           dog.hitCooldown = 0.6;
@@ -6537,47 +7973,99 @@ export class GameEngine {
         }
       } else if (npc.isPolice && (this.wantedLevel > 0 || npc.hostile)) {
         const tier = npc.lawTier ?? (npc.isArmy ? 5 : npc.isCommando ? 4 : npc.isSwat ? 3 : npc.isBeatCop ? 1 : 2);
-        // Active Police engagement scaled by tier
-        npc.yaw = lerpAngle(npc.yaw, Math.atan2(-dx, -dz), 1 - Math.exp(-9 * dt));
-        const engageDist = tier >= 3 ? 16 : 12;
-        if (dist > engageDist && npc.staggerTimer <= 0) {
-          const spd = tier >= 4 ? 5.2 : 4.6;
-          const nextP = this.resolveCollisions(
-            npc.x - Math.sin(npc.yaw) * spd * dt,
-            npc.z - Math.cos(npc.yaw) * spd * dt,
-            0.45,
-          );
-          npc.x = nextP.x;
-          npc.z = nextP.z;
-          npc.walkPhase += dt * 9;
+        const nonLethalArrest = this.isPoliceNonLethalArrestMode() && tier <= 3;
+
+        // Swap Police hand prop between wooden Lathi (non-lethal arrest) and firearm (lethal force)
+        npc.rig.lathiProp.visible = nonLethalArrest;
+        for (const child of npc.rig.weaponMount.children) {
+          if (child !== npc.rig.lathiProp) {
+            child.visible = !nonLethalArrest;
+          }
         }
 
-        // Tier-based firing rate & damage (1★ Beat Cop = mild pistol, 5★ Army = heavy rifle)
-        npc.fireCooldown -= dt;
-        const maxRange = tier >= 4 ? 40 : tier >= 3 ? 36 : 30;
-        if (npc.fireCooldown <= 0 && dist < maxRange) {
-          const baseInterval = tier === 1 ? 1.65 : tier === 2 ? 1.2 : tier === 3 ? 0.92 : tier === 4 ? 0.72 : 0.6;
-          npc.fireCooldown = baseInterval + Math.random() * 0.25;
-          const dirX = dx / Math.max(0.1, dist);
-          const dirZ = dz / Math.max(0.1, dist);
-          const wallDist = this.raycastBuildings(npc.x, npc.z, dirX, dirZ, dist);
-          if (wallDist >= dist - 0.8) {
-            soundEngine.playGunshot(npc.weaponKind ?? (tier >= 4 ? 'rifle' : tier === 3 ? 'smg' : 'pistol'));
-            const hitChance = dist < 14 ? (tier === 1 ? 0.55 : 0.72) : tier >= 3 ? 0.52 : 0.42;
-            const dmg = tier === 1 ? 5 : tier === 2 ? 8 : tier === 3 ? 11 : tier === 4 ? 13 : 15;
-            if (Math.random() < hitChance) {
-              const reason =
-                tier === 5
-                  ? 'Army Jawan ki goli se dher ho gaye'
-                  : tier === 4
-                    ? 'ATS Commando ki goli se haar gaye'
-                    : tier === 3
-                      ? 'STF SWAT squad ne maar giraya'
-                      : 'Police ki goli se dher ho gaye';
-              this.damagePlayer(dmg, reason);
+        npc.yaw = lerpAngle(npc.yaw, Math.atan2(-dx, -dz), 1 - Math.exp(-9 * dt));
+
+        if (nonLethalArrest) {
+          // Non-lethal Arrest Mode (1-2★ or 3★ holstered): rush in with Lathi baton to corner & bust player
+          const lathiRange = 1.85;
+          if (dist > lathiRange && npc.staggerTimer <= 0) {
+            const spd = 5.3;
+            const nextP = this.resolveCollisions(
+              npc.x - Math.sin(npc.yaw) * spd * dt,
+              npc.z - Math.cos(npc.yaw) * spd * dt,
+              0.45,
+            );
+            npc.x = nextP.x;
+            npc.z = nextP.z;
+            npc.walkPhase += dt * 10;
+          } else {
+            npc.walkPhase = 0;
+          }
+
+          if (dist <= 2.2) {
+            npc.meleeCooldown -= dt;
+            if (npc.meleeCooldown <= 0) {
+              npc.meleeCooldown = 0.85;
+              npc.punchAnimTimer = 0.24;
+              soundEngine.playPunch(true);
+              this.playerStamina = Math.max(0, this.playerStamina - 16);
+              if (this.playerStamina < 10) this.staminaExhausted = true;
+              // Lathi taps deal light non-lethal damage (capped above 8 HP)
+              if (this.playerHp > 8) {
+                this.playerHp = Math.max(8, this.playerHp - 8);
+              }
+              if (Math.random() < 0.4) {
+                this.speakWithSubtitle(
+                  npc.name,
+                  'officer',
+                  npc.id,
+                  'Haath upar kar! Lathi padegi, surrender kar!',
+                  'हाथ ऊपर कर! लाठी पड़ेगी, सरेंडर कर!',
+                );
+              }
             }
-            const traceColor = tier >= 5 ? 0x22c55e : tier >= 3 ? 0x38bdf8 : 0xef4444;
-            this.spawnBulletTrace(npc.x, 1.32, npc.z, this.playerX, 1.25, this.playerZ, traceColor);
+          }
+        } else {
+          // Lethal Mode (4-5★, shot at police, or holding weapon at 3★)
+          const engageDist = tier >= 3 ? 16 : 12;
+          if (dist > engageDist && npc.staggerTimer <= 0) {
+            const spd = tier >= 4 ? 5.2 : 4.6;
+            const nextP = this.resolveCollisions(
+              npc.x - Math.sin(npc.yaw) * spd * dt,
+              npc.z - Math.cos(npc.yaw) * spd * dt,
+              0.45,
+            );
+            npc.x = nextP.x;
+            npc.z = nextP.z;
+            npc.walkPhase += dt * 9;
+          }
+
+          npc.fireCooldown -= dt;
+          const maxRange = tier >= 4 ? 40 : tier >= 3 ? 36 : 30;
+          if (npc.fireCooldown <= 0 && dist < maxRange) {
+            const baseInterval = tier === 1 ? 1.65 : tier === 2 ? 1.2 : tier === 3 ? 0.92 : tier === 4 ? 0.72 : 0.6;
+            npc.fireCooldown = baseInterval + Math.random() * 0.25;
+            const dirX = dx / Math.max(0.1, dist);
+            const dirZ = dz / Math.max(0.1, dist);
+            const wallDist = this.raycastBuildings(npc.x, npc.z, dirX, dirZ, dist);
+            if (wallDist >= dist - 0.8) {
+              soundEngine.playGunshot(npc.weaponKind ?? (tier >= 4 ? 'rifle' : tier === 3 ? 'smg' : 'pistol'));
+              const hitChance = dist < 14 ? (tier === 1 ? 0.55 : 0.72) : tier >= 3 ? 0.52 : 0.42;
+              const dmg = tier === 1 ? 5 : tier === 2 ? 8 : tier === 3 ? 11 : tier === 4 ? 13 : 15;
+              if (Math.random() < hitChance) {
+                const reason =
+                  tier === 5
+                    ? 'Army Jawan ki goli se dher ho gaye'
+                    : tier === 4
+                      ? 'ATS Commando ki goli se haar gaye'
+                      : tier === 3
+                        ? 'STF SWAT squad ne maar giraya'
+                        : 'Police ki goli se dher ho gaye';
+                this.damagePlayer(dmg, reason);
+              }
+              const traceColor = tier >= 5 ? 0x22c55e : tier >= 3 ? 0x38bdf8 : 0xef4444;
+              this.spawnBulletTrace(npc.x, 1.32, npc.z, this.playerX, 1.25, this.playerZ, traceColor);
+            }
           }
         }
       } else if (npc.isTrafficPolice && !npc.hostile) {
@@ -6828,6 +8316,25 @@ export class GameEngine {
       this.npcs = this.npcs.filter((n) => !toRemove.includes(n.id));
     }
 
+    // Check cornered BUSTED arrest condition when non-lethal lathi officers pin player at low stamina/HP
+    if (this.isPoliceNonLethalArrestMode() && this.mode === 'PLAYING' && this.missionPhase === 'NONE') {
+      const slowOrOnFoot = !this.currentVehicle || Math.abs(this.currentVehicle.speed) < 3.5;
+      const copPinning = this.npcs.some(
+        (n) => !n.dead && n.isPolice && Math.hypot(n.x - this.playerX, n.z - this.playerZ) < 2.25,
+      );
+      if (slowOrOnFoot && copPinning && (this.playerStamina < 28 || this.playerHp < 32)) {
+        this.corneredArrestTimer += dt;
+        if (this.corneredArrestTimer >= 1.05) {
+          this.corneredArrestTimer = 0;
+          this.triggerBusted('Police ne gher kar lathi-charge ke baad giraftar kar liya!');
+        }
+      } else {
+        this.corneredArrestTimer = Math.max(0, this.corneredArrestTimer - dt * 1.5);
+      }
+    } else {
+      this.corneredArrestTimer = 0;
+    }
+
     // Maintain healthy ambient street population across expanded city
     while (activeCount < 24) {
       this.spawnNpc(Math.random() < 0.22);
@@ -6849,8 +8356,24 @@ export class GameEngine {
         this.callbacks.onToast({ text: `+${formatRs(p.amount)}`, tone: 'cash' });
         this.saveGameState();
         this.scene.remove(p.mesh);
+        p.mesh.traverse((o) => {
+          const m = o as THREE.Mesh;
+          if (m.isMesh) {
+            m.geometry.dispose();
+            if (Array.isArray(m.material)) m.material.forEach((mt) => mt.dispose());
+            else m.material?.dispose();
+          }
+        });
       } else if (p.age > 35) {
         this.scene.remove(p.mesh);
+        p.mesh.traverse((o) => {
+          const m = o as THREE.Mesh;
+          if (m.isMesh) {
+            m.geometry.dispose();
+            if (Array.isArray(m.material)) m.material.forEach((mt) => mt.dispose());
+            else m.material?.dispose();
+          }
+        });
       } else {
         remainingPickups.push(p);
       }
@@ -7021,6 +8544,8 @@ export class GameEngine {
       { x: this.hospitalPos.x, z: this.hospitalPos.z, type: 'hospital' },
       { x: this.bankPos.x, z: this.bankPos.z, type: 'bank' },
       { x: this.licenseOfficePos.x, z: this.licenseOfficePos.z, type: 'dm_office' },
+      { x: -90, z: 90, type: 'court' },
+      { x: -150, z: 150, type: 'jail' },
     ];
     for (const stall of this.chaiStalls) {
       blips.push({
@@ -7259,6 +8784,58 @@ export class GameEngine {
       }
     }
 
+    if (this.mode === 'JAIL' && this.jailRig && this.jailState) {
+      const stationTags: {
+        id: string;
+        station: 'BUNK' | 'WORKSHOP' | 'WARDEN' | 'ESCAPE_GATE';
+        pos: THREE.Vector3;
+        title: string;
+        subtitle: string;
+      }[] = [
+        {
+          id: 'jail-bunk',
+          station: 'BUNK',
+          pos: this.jailRig.bunkPos,
+          title: '1. Cell Bunk',
+          subtitle: 'Skip Saza (+Bank Interest) [E]',
+        },
+        {
+          id: 'jail-workshop',
+          station: 'WORKSHOP',
+          pos: this.jailRig.workshopPos,
+          title: '2. Workshop',
+          subtitle: `+${formatRs(JAIL_WORK_WAGE_INR)} & -50% Saza [E]`,
+        },
+        {
+          id: 'jail-warden',
+          station: 'WARDEN',
+          pos: this.jailRig.wardenPos,
+          title: '3. Jailer Mahendra',
+          subtitle: `Bribe ${formatRs(this.jailState.wardenBribeCost)} [E]`,
+        },
+        {
+          id: 'jail-escape',
+          station: 'ESCAPE_GATE',
+          pos: this.jailRig.escapePos,
+          title: '4. Weak East Gate',
+          subtitle: 'Dodge Cones -> Break Out (3★) [E]',
+        },
+      ];
+      for (const st of stationTags) {
+        this._proj.set(st.pos.x, 3.7, st.pos.z).project(this.camera);
+        if (this._proj.z < 1) {
+          worldLabels.push({
+            id: st.id,
+            title: st.title,
+            subtitle: st.subtitle,
+            screenX: (this._proj.x * 0.5 + 0.5) * w,
+            screenY: (-this._proj.y * 0.5 + 0.5) * h,
+            jailStation: st.station,
+          });
+        }
+      }
+    }
+
     if (distToLicense < 26 && this.licenseOfficer) {
       this._proj.copy(this.licenseOfficer.worldPos).project(this.camera);
       if (this._proj.z < 1) {
@@ -7431,6 +9008,50 @@ export class GameEngine {
         }
       : null;
 
+    const jailHud: JailHudState | null = this.jailState
+      ? {
+          active: true,
+          starsAtArrest: this.jailState.starsAtArrest,
+          sentenceDaysTotal: this.jailState.sentenceDaysTotal,
+          remainingDays: Number(this.jailState.remainingDays.toFixed(2)),
+          remainingHoursLabel: `${Math.max(1, Math.round(this.jailState.remainingDays * 24))} hrs`,
+          wardenBribeCost: this.jailState.wardenBribeCost,
+          workCount: this.jailState.workCount,
+          workRewardTotal: this.jailState.workCount * JAIL_WORK_WAGE_INR,
+          escrowedWeaponsCount: this.jailEscrowedWeapons.length,
+          activeTaskKind: this.jailState.activeTaskKind,
+          activeTaskPct:
+            this.jailState.activeTaskKind !== 'NONE'
+              ? clamp(Math.round((this.jailState.taskTimer / Math.max(0.1, this.jailState.taskDuration)) * 100), 0, 100)
+              : 0,
+          spottedByGuard: this.jailState.spottedByGuard,
+          nearStation: this.jailState.nearStation,
+          statusBanner: this.jailState.statusBanner,
+          playerX: this.playerX,
+          playerZ: this.playerZ,
+          playerYaw: this.playerYaw,
+          guards: (this.jailRig?.guards ?? []).map((g) => ({
+            x: g.x,
+            z: g.z,
+            yaw: g.yaw,
+            alerted: this.jailState?.spottedByGuard ?? false,
+          })),
+        }
+      : null;
+
+    const wantedNextHint =
+      this.wantedLevel === 1
+        ? `Next 2★: Police par fire / car blast / 2 civilians (${this.civilianKillsInSpree}/2)`
+        : this.wantedLevel === 2
+          ? `Next 3★ SWAT: ${this.policeKilledCount}/3 cops OR ${this.policeVehiclesDestroyed}/1 police car`
+          : this.wantedLevel === 3
+            ? `Next 4★ Chopper: ${this.swatKilledCount}/2 SWAT OR ${this.policeKilledCount}/6 cops OR ${this.policeVehiclesDestroyed}/2 vehs`
+            : this.wantedLevel === 4
+              ? `Next 5★ Army: ${this.commandoKilledCount}/3 Commandos OR ${this.policeKilledCount}/10 cops OR ${this.policeVehiclesDestroyed}/4 vehs`
+              : this.wantedLevel >= 5
+                ? '5★ MAX HEAT: Indian Army APC + Trucks + Chopper Active!'
+                : null;
+
     this.callbacks.onHudUpdate({
       hp: Math.ceil(this.playerHp),
       maxHp: this.playerMaxHp,
@@ -7441,6 +9062,7 @@ export class GameEngine {
       cash: this.playerCash,
       wantedLevel: this.wantedLevel,
       wantedTierTitle: WANTED_TIER_TITLES[this.wantedLevel] ?? '',
+      wantedNextHint,
       wantedCooldownPct: this.wantedLevel > 0 ? clamp(this.wantedDecayTimer / 18, 0, 1) : 0,
       hasGunLicense: this.hasGunLicense,
       hasDrivingLicense: this.hasDrivingLicense,
@@ -7489,6 +9111,26 @@ export class GameEngine {
       npcSubtitle: this.npcSubtitle ? { speaker: this.npcSubtitle.speaker, text: this.npcSubtitle.text } : null,
       policeWarning,
       wastedReason: this.wastedReason,
+      bustedReason: this.bustedReason,
+      bustedConfiscated: this.bustedConfiscated,
+      policeNonLethalArrest: this.isPoliceNonLethalArrestMode(),
+      surrenderHoldPct: this.surrenderHolding
+        ? clamp(Math.round((this.surrenderHoldTimer / 0.65) * 100), 0, 100)
+        : 0,
+      streetBribe: this.isStreetBribeAvailable()
+        ? {
+            available: true,
+            officerName:
+              this.npcs.find(
+                (n) =>
+                  !n.dead &&
+                  n.isPolice &&
+                  !n.bribeRefused &&
+                  Math.hypot(n.x - this.playerX, n.z - this.playerZ) < 16,
+              )?.name ?? 'Officer',
+            amount: STREET_BRIBE_INR,
+          }
+        : null,
       kills: this.kills,
       blips,
       damagedNpcs,
@@ -7500,7 +9142,25 @@ export class GameEngine {
       blessedTotalSec: this.blessedTotalSec,
       prayerAnim: prayerAnimHud,
       bank: this.getBankHudState(),
+      courtroom: this.courtroomState
+        ? {
+            ...this.courtroomState,
+            charges: [...this.courtroomState.charges],
+            confiscated: [...this.courtroomState.confiscated],
+            dialogueTurns: [...this.courtroomState.dialogueTurns],
+          }
+        : null,
+      jail: jailHud,
     });
+  }
+
+  private isPoliceNonLethalArrestMode(): boolean {
+    return (
+      this.wantedLevel >= 1 &&
+      this.wantedLevel <= 3 &&
+      !this.playerShotAtPolice &&
+      (this.wantedLevel <= 2 || this.activeWeapon === 'fists' || this.surrenderHolding)
+    );
   }
 
   public dispose(): void {
