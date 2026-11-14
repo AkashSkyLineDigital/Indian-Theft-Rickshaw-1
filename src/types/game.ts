@@ -1,4 +1,4 @@
-export type GameMode = 'TITLE' | 'PLAYING' | 'PAUSED' | 'WASTED' | 'BUSTED' | 'COURTROOM' | 'JAIL';
+export type GameMode = 'TITLE' | 'PLAYING' | 'PAUSED' | 'WASTED' | 'BUSTED' | 'CUSTODY' | 'COURTROOM' | 'JAIL';
 
 export type WeaponId = 'fists' | 'pistol' | 'smg' | 'shotgun' | 'rifle';
 
@@ -24,6 +24,7 @@ export const JAIL_WARDEN_BRIBE_HIGH_INR = 30000;
 export const JAIL_WORK_WAGE_INR = 2000;
 export const MISSION_TIME_LIMIT_SEC = 20 * 60; // 20 minutes
 export const GUN_LICENSE_FEE_INR = 25000;
+export const URGENT_THANA_LICENSE_RENEWAL_INR = 35000;
 export const DRIVING_LICENSE_FEE_INR = 12000;
 export const HELMET_PRICE_INR = 1500;
 export const NO_HELMET_FINE_INR = 500;
@@ -577,7 +578,7 @@ export const CITY_LOCATIONS: CityLocationPreset[] = [
   { id: 'royal-bank', label: 'Royal Bank Of India', category: 'service', x: -30, z: -74, badge: 'B' },
   { id: 'dm-office', label: 'DM Office (Arms & Driving License)', category: 'service', x: -90, z: 46, badge: 'L' },
   { id: 'district-court', label: 'District & Sessions Court', category: 'service', x: -90, z: 108, badge: '⚖' },
-  { id: 'central-jail', label: 'Bharat Central Jail', category: 'service', x: -150, z: 178, badge: 'J' },
+  { id: 'central-jail', label: 'Bharat Police Thana & Central Jail', category: 'service', x: -150, z: 176, badge: 'T' },
   { id: 'pankaj-armory', label: 'Pankaj Ammunation', category: 'service', x: 30, z: -14, badge: 'G' },
   { id: 'hospital', label: 'City Hospital', category: 'service', x: -30, z: 14, badge: '+' },
   { id: 'auto-stand', label: 'Chai Chowk Auto Stand', category: 'service', x: 7.5, z: 14, badge: 'A' },
@@ -613,6 +614,29 @@ export interface CourtroomState {
   dialogueIndex: number;
   dialogueTurns: CourtroomDialogueTurn[];
   argumentsFinished: boolean;
+}
+
+export type CustodyPhase =
+  | 'THANA_LOCKUP'
+  | 'VAN_TO_COURT'
+  | 'VAN_TO_THANA_RELEASE'
+  | 'VAN_TO_JAIL';
+
+export interface CustodyCutsceneHud {
+  active: boolean;
+  phase: CustodyPhase;
+  stepIndex: number;
+  title: string;
+  subtitle: string;
+  stepLabel: string;
+  progressPct: number;
+}
+
+export interface LicenseRevokedPromptHud {
+  active: boolean;
+  starsAtArrest: number;
+  urgentFee: number;
+  standardFee: number;
 }
 
 export interface JailGuardBlip {
@@ -677,6 +701,7 @@ export interface HudSnapshot {
   nearGunShop: boolean;
   nearBank: boolean;
   nearLicenseOffice: boolean;
+  nearThanaDesk: boolean;
   nearRescueVan: boolean;
   nearStall: StreetStallHudInfo | null;
   nearAtm: AtmLandmarkHud | null;
@@ -706,5 +731,7 @@ export interface HudSnapshot {
   prayerAnim: PrayerAnimHud | null;
   bank: BankAccountHudState;
   courtroom: CourtroomState | null;
+  custodyCutscene: CustodyCutsceneHud | null;
+  licenseRevokedPrompt: LicenseRevokedPromptHud | null;
   jail: JailHudState | null;
 }

@@ -4,11 +4,13 @@ import { BankModal } from './components/BankModal';
 import { BustedOverlay } from './components/BustedOverlay';
 import { CityMapModal } from './components/CityMapModal';
 import { CourtroomOverlay } from './components/CourtroomOverlay';
+import { CustodyCutsceneOverlay } from './components/CustodyCutsceneOverlay';
 import { GunShopModal } from './components/GunShopModal';
 import { HUD } from './components/HUD';
 import { InGamePhone } from './components/InGamePhone';
 import { JailHudOverlay } from './components/JailHudOverlay';
 import { LicenseOfficeModal } from './components/LicenseOfficeModal';
+import { LicenseRevokedModal } from './components/LicenseRevokedModal';
 import { SettingsModal } from './components/SettingsModal';
 import { ShopConfirmModal } from './components/ShopConfirmModal';
 import { StreetStallModal } from './components/StreetStallModal';
@@ -80,6 +82,7 @@ const INITIAL_HUD: HudSnapshot = {
   nearGunShop: false,
   nearBank: false,
   nearLicenseOffice: false,
+  nearThanaDesk: false,
   nearRescueVan: false,
   nearDogAction: null,
   nearStall: null,
@@ -144,6 +147,8 @@ const INITIAL_HUD: HudSnapshot = {
     passbook: [],
   },
   courtroom: null,
+  custodyCutscene: null,
+  licenseRevokedPrompt: null,
   jail: null,
 };
 
@@ -575,11 +580,13 @@ export default function App() {
                               ? hud.nearSacredPlace.kind === 'mosque'
                                 ? 'DUA'
                                 : 'DARSHAN'
-                              : hud.nearLicenseOffice
-                                ? 'LICENSE'
-                                : hud.nearBank
-                                  ? 'BANK'
-                                  : null
+                              : hud.nearThanaDesk
+                                ? 'THANA DESK'
+                                : hud.nearLicenseOffice
+                                  ? 'LICENSE'
+                                  : hud.nearBank
+                                    ? 'BANK'
+                                    : null
           }
           onMove={(x, y) => engineRef.current?.setTouchMove(x, y)}
           onSprint={(active) => engineRef.current?.setTouchSprint(active)}
@@ -830,6 +837,13 @@ export default function App() {
         />
       )}
 
+      {!engineError && mode === 'CUSTODY' && hud.custodyCutscene && (
+        <CustodyCutsceneOverlay
+          cutscene={hud.custodyCutscene}
+          onSkip={() => engineRef.current?.skipCustodyCutscene()}
+        />
+      )}
+
       {!engineError && mode === 'COURTROOM' && hud.courtroom && (
         <CourtroomOverlay
           courtroom={hud.courtroom}
@@ -839,6 +853,16 @@ export default function App() {
           onSkipArguments={() => engineRef.current?.skipCourtroomArguments()}
           onPayBail={(source) => engineRef.current?.payCourtroomBail(source)}
           onEnterJail={() => engineRef.current?.enterCentralJailFromCourt()}
+        />
+      )}
+
+      {!engineError && mode === 'PLAYING' && hud.licenseRevokedPrompt?.active && (
+        <LicenseRevokedModal
+          prompt={hud.licenseRevokedPrompt}
+          cash={hud.cash}
+          bankSavings={hud.bank.savingsTotal}
+          onRenewAtThana={(source) => engineRef.current?.renewLicenseAtThana(source)}
+          onVisitDmLater={() => engineRef.current?.dismissLicenseRevokedToDm()}
         />
       )}
 

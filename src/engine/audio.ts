@@ -50,8 +50,17 @@ class SoundEngine {
   private chopperShouldPlay = false;
   private isPaused = false;
   private lastWarnVoiceAt = 0;
+  private lastRadioChatterAt = 0;
+  private lastPhoneRingAt = 0;
   private cachedVoices: SpeechSynthesisVoice[] = [];
   private voicesHooked = false;
+  private speechSeq = 0;
+  private activeSpeaking = false;
+  private activeSpeechPriority: 'high' | 'normal' | 'low' = 'low';
+  private speechTimerId: number | null = null;
+  private speechMaxTimeoutId: number | null = null;
+  private keepAliveId: number | null = null;
+  private minSubtitleHoldUntil = 0;
 
   constructor() {
     this.hookSpeechVoices();
@@ -943,6 +952,18 @@ class SoundEngine {
     }
   }
 
+  public isSpeaking(): boolean {
+    if (this.activeSpeaking) return true;
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        if (window.speechSynthesis.speaking || window.speechSynthesis.pending) return true;
+      } catch {
+        // ignore
+      }
+    }
+    return performance.now() < this.minSubtitleHoldUntil;
+  }
+
   public stopAll(): void {
     this.sirenShouldPlay = false;
     this.chopperShouldPlay = false;
@@ -950,133 +971,352 @@ class SoundEngine {
     this.stopPoliceVoice();
   }
 
-  public speakPoliceLine(kind: 'kill' | 'warn', customText?: string, customTts?: string): void {
-    if (!this.settings.policeVoiceEnabled) return;
+  public playPoliceRadioChatter(): void {
+    const nowMs = performance.now();
+    if (nowMs - this.lastRadioChatterAt < 4500) return;
+    this.lastRadioChatterAt = nowMs;
+
+    const ctx = this.ensureContext();
+    const vol = this.effectiveSfxGain();
+    if (!ctx || vol <= 0.01) return;
+
+    const now = ctx.currentTime;
+    if (this.noiseBuffer) {
+      const sq = ctx.createBufferSource();
+      sq.buffer = this.noiseBuffer;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(1650, now);
+      bp.Q.value = 2.4;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.001, now);
+      g.gain.linearRampToValueAtTime(0.09 * vol, now + 0.015);
+      g.gain.setValueAtTime(0.075 * vol, now + 0.14);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+      sq.connect(bp);
+      bp.connect(g);
+      g.connect(ctx.destination);
+      sq.start(now);
+      sq.stop(now + 0.25);
+
+      const sqEnd = ctx.createBufferSource();
+      sqEnd.buffer = this.noiseBuffer;
+      const bp2 = ctx.createBiquadFilter();
+      bp2.type = 'bandpass';
+      bp2.frequency.setValueAtTime(1900, now + 0.32);
+      bp2.Q.value = 3.0;
+      const g2 = ctx.createGain();
+      g2.gain.setValueAtTime(0.001, now + 0.32);
+      g2.gain.linearRampToValueAtTime(0.08 * vol, now + 0.335);
+      g2.gain.exponentialRampToValueAtTime(0.001, now + 0.43);
+      sqEnd.connect(bp2);
+      bp2.connect(g2);
+      g2.connect(ctx.destination);
+      sqEnd.start(now + 0.32);
+      sqEnd.stop(now + 0.44);
+    }
+
+    // Dual-tone police wireless roger beep
+    [1320, 1760].forEach((freq, idx) => {
+      const t = now + 0.23 + idx * 0.045;
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, t);
+      const og = ctx.createGain();
+      og.gain.setValueAtTime(0.001, t);
+      og.gain.linearRampToValueAtTime(0.07 * vol, t + 0.006);
+      og.gain.exponentialRampToValueAtTime(0.001, t + 0.045);
+      osc.connect(og);
+      og.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.05);
+    });
+  }
+
+  public playThanaPhoneRing(): void {
+    const nowMs = performance.now();
+    if (nowMs - this.lastPhoneRingAt < 6500) return;
+    this.lastPhoneRingAt = nowMs;
+
+    const ctx = this.ensureContext();
+    const vol = this.effectiveSfxGain();
+    if (!ctx || vol <= 0.01) return;
+
+    const now = ctx.currentTime;
+    // Classic Indian landline double ring: ring-ring ... pause ... ring-ring
+    [0, 0.36].forEach((offset) => {
+      [420, 468].forEach((freq) => {
+        const osc = ctx.createOscillator();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, now + offset);
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.001, now + offset);
+        g.gain.linearRampToValueAtTime(0.065 * vol, now + offset + 0.02);
+        g.gain.setValueAtTime(0.065 * vol, now + offset + 0.22);
+        g.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.27);
+        osc.connect(g);
+        g.connect(ctx.destination);
+        osc.start(now + offset);
+        osc.stop(now + offset + 0.28);
+      });
+    });
+  }
+
+  public pickPoliceLine(kind: 'kill' | 'warn'): { text: string; tts: string } {
+    const pool = kind === 'kill' ? POLICE_KILL_LINES : POLICE_WARN_LINES;
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+
+  public speakPoliceLine(
+    kind: 'kill' | 'warn',
+    customText?: string,
+    customTts?: string,
+  ): { text: string; tts: string } | null {
+    if (!this.settings.policeVoiceEnabled) return null;
     if (kind === 'warn') {
       const now = performance.now();
-      if (now - this.lastWarnVoiceAt < 7500) return;
+      if (now - this.lastWarnVoiceAt < 7500) return null;
       this.lastWarnVoiceAt = now;
     }
 
-    const pool = kind === 'kill' ? POLICE_KILL_LINES : POLICE_WARN_LINES;
-    const picked = pool[Math.floor(Math.random() * pool.length)];
+    const picked = this.pickPoliceLine(kind);
+    const displayText = customText ?? picked.text;
     const ttsText = customTts ?? customText ?? picked.tts;
-    this.speakNpcLine('officer', 0, ttsText);
+    this.speakNpcLine('officer', Math.floor(Math.random() * 1000) + 10, ttsText, kind === 'kill' ? 'high' : 'normal');
+    return { text: displayText, tts: ttsText };
+  }
+
+  private clearSpeechTimers(): void {
+    if (this.speechTimerId !== null) {
+      window.clearTimeout(this.speechTimerId);
+      this.speechTimerId = null;
+    }
+    if (this.speechMaxTimeoutId !== null) {
+      window.clearTimeout(this.speechMaxTimeoutId);
+      this.speechMaxTimeoutId = null;
+    }
+    if (this.keepAliveId !== null) {
+      window.clearInterval(this.keepAliveId);
+      this.keepAliveId = null;
+    }
   }
 
   /**
-   * Speaks an NPC or system line prioritizing Hindi AI voices (`hi-IN`) so Devanagari
-   * Hindi pronunciation is natural and crystal clear rather than butchered English TTS.
-   * Falls back seamlessly through `hi-IN` -> `hi` -> `en-IN` -> default `hi-IN` utter +
-   * retro Web Audio synth cadence so NPCs ALWAYS speak reliably.
+   * Speaks an NPC or system line prioritizing Hindi AI voices (`hi-IN`, `en-IN`),
+   * ensuring distinct male vocal profiles per character role/seed, exact full-sentence
+   * completion without cancel() truncation, and priority gating so ambient chatter
+   * never interrupts active Judge/Vakil/Inspector/Story dialogue.
    */
   public speakNpcLine(
-    role: 'officer' | 'enforcer' | 'dealer' | 'citizen' | 'banker' | 'narrator' | 'judge' | 'lawyer' | 'warden',
+    role:
+      | 'officer'
+      | 'inspector'
+      | 'enforcer'
+      | 'dealer'
+      | 'citizen'
+      | 'banker'
+      | 'narrator'
+      | 'judge'
+      | 'lawyer'
+      | 'warden'
+      | 'clerk',
     seedId: number,
     textOrDevanagari: string,
+    priority: 'high' | 'normal' | 'low' = 'normal',
   ): void {
-    if ((role === 'officer' || role === 'warden') && !this.settings.policeVoiceEnabled) return;
-    if ((role === 'citizen' || role === 'enforcer' || role === 'dealer') && !this.settings.npcVoiceEnabled) return;
+    if ((role === 'officer' || role === 'warden' || role === 'inspector') && !this.settings.policeVoiceEnabled) return;
+    if ((role === 'citizen' || role === 'enforcer' || role === 'dealer' || role === 'clerk') && !this.settings.npcVoiceEnabled) return;
     if ((role === 'banker' || role === 'narrator' || role === 'judge' || role === 'lawyer') && !this.settings.gameVoiceEnabled) return;
 
-    const hash = Math.abs(seedId * 2654435761) >>> 0;
-    let rate = 0.96;
-    let pitch = 1.0;
-    let blipFreq = 260;
-    let blipWave: OscillatorType = 'square';
+    const cleanText = textOrDevanagari.trim();
+    if (!cleanText) return;
 
-    if (role === 'officer' || role === 'warden') {
-      rate = 0.84;
-      pitch = 0.84;
-      blipFreq = 165;
-      blipWave = 'triangle';
-    } else if (role === 'judge') {
+    // Never let low/normal ambient lines interrupt an active higher-priority utterance
+    if (this.isSpeaking()) {
+      if (priority === 'low' && (this.activeSpeechPriority === 'high' || this.activeSpeechPriority === 'normal')) {
+        return;
+      }
+      if (priority === 'normal' && this.activeSpeechPriority === 'high') {
+        return;
+      }
+    }
+
+    const hash = Math.abs(seedId * 2654435761 + role.charCodeAt(0) * 131) >>> 0;
+    let rate = 0.94;
+    let pitch = 0.88;
+    let blipFreq = 220;
+    let blipWave: OscillatorType = 'triangle';
+    const isFemaleRole = role === 'lawyer';
+
+    if (role === 'judge') {
       rate = 0.88;
-      pitch = 0.78;
-      blipFreq = 148;
+      pitch = 0.68; // Deep authoritative male judicial voice
+      blipFreq = 138;
+      blipWave = 'triangle';
+    } else if (role === 'inspector') {
+      rate = 0.93;
+      pitch = 0.77; // Stern male Police Inspector baritone
+      blipFreq = 158;
+      blipWave = 'triangle';
+    } else if (role === 'warden') {
+      rate = 0.89;
+      pitch = 0.72; // Gruff male Jailer voice
+      blipFreq = 146;
+      blipWave = 'sawtooth';
+    } else if (role === 'officer') {
+      rate = 0.91 + (hash % 3) * 0.03;
+      pitch = 0.79 + (hash % 4) * 0.04; // Distinct male beat/traffic cops
+      blipFreq = 165 + (hash % 3) * 12;
       blipWave = 'triangle';
     } else if (role === 'lawyer') {
-      rate = 1.02;
-      pitch = 1.04;
-      blipFreq = 290;
+      rate = 0.97;
+      pitch = 1.12; // Adv. Meera Sharma clear female tone
+      blipFreq = 305;
       blipWave = 'sine';
     } else if (role === 'banker') {
       rate = 0.94;
-      pitch = 1.02;
-      blipFreq = 285;
+      pitch = 0.9;
+      blipFreq = 240;
       blipWave = 'triangle';
     } else if (role === 'narrator') {
-      rate = 0.96;
-      pitch = 0.96;
-      blipFreq = 320;
+      rate = 0.95;
+      pitch = 0.88;
+      blipFreq = 260;
       blipWave = 'sine';
     } else if (role === 'enforcer') {
-      rate = 0.92 + (hash % 3) * 0.04;
-      pitch = 0.74 + (hash % 4) * 0.05;
-      blipFreq = 132 + (hash % 4) * 14;
+      rate = 0.91 + (hash % 3) * 0.04;
+      pitch = 0.7 + (hash % 4) * 0.045;
+      blipFreq = 128 + (hash % 4) * 14;
       blipWave = 'sawtooth';
     } else if (role === 'dealer') {
-      rate = 0.96;
-      pitch = 0.94;
-      blipFreq = 215;
+      rate = 0.95;
+      pitch = 0.85;
+      blipFreq = 205;
+      blipWave = 'square';
+    } else if (role === 'clerk') {
+      rate = 0.96 + (hash % 2) * 0.04;
+      pitch = 0.92 + (hash % 3) * 0.04;
+      blipFreq = 245;
       blipWave = 'square';
     } else {
-      rate = 0.9 + (hash % 5) * 0.05;
-      pitch = 0.86 + (hash % 6) * 0.06;
-      blipFreq = 235 + (hash % 7) * 26;
-      blipWave = 'square';
+      // Varied male citizen voices across distinct pitch/rate registers
+      rate = 0.89 + (hash % 4) * 0.04;
+      pitch = 0.75 + (hash % 6) * 0.042;
+      blipFreq = 185 + (hash % 6) * 20;
+      blipWave = 'triangle';
     }
 
-    let spokeTts = false;
+    const seq = ++this.speechSeq;
+    this.clearSpeechTimers();
+    this.activeSpeaking = true;
+    this.activeSpeechPriority = priority;
+    const estDurationMs = Math.max(2200, Math.min(16000, cleanText.length * 85));
+    this.minSubtitleHoldUntil = performance.now() + Math.min(4500, Math.max(1500, cleanText.length * 55));
+
+    let hasHiVoices = false;
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       try {
         const live = window.speechSynthesis.getVoices();
         if (live && live.length > 0) this.cachedVoices = live;
         const allVoices = this.cachedVoices;
 
-        // Strictly prioritize Hindi AI voices first (`hi-IN`, `hi`, Hindi names), then Indian English (`en-IN`), then any voice
         const hiAll = allVoices.filter(
           (v) => v.lang.toLowerCase().startsWith('hi') || /hindi|हिन्दी|hemant|kalpana|swara|madhur/i.test(v.name),
         );
-        const hiLocal = hiAll.filter((v) => v.localService);
         const inAll = allVoices.filter((v) => v.lang.toLowerCase().includes('in'));
-        const pool =
-          hiAll.length > 0
-            ? hiAll
-            : hiLocal.length > 0
-              ? hiLocal
-              : inAll.length > 0
-                ? inAll
-                : allVoices;
+        const pool = hiAll.length > 0 ? hiAll : inAll.length > 0 ? inAll : allVoices;
+        hasHiVoices = hiAll.length > 0;
 
-        window.speechSynthesis.cancel();
-        const utter = new SpeechSynthesisUtterance(textOrDevanagari);
-        utter.rate = rate;
-        utter.pitch = pitch;
-        utter.volume = Math.max(0.2, Math.min(1, this.settings.masterVolume));
+        // Partition male vs female voices cleanly so male characters pick male voices when available
+        const maleRegex = /hemant|madhur|prabhat|rishi|male|ravindra|amit|arjun|neeraj|suresh|david|mark|alex|daniel|george|guy|andrew|brian|christopher|eric|ryan|steffan/i;
+        const femaleRegex = /kalpana|swara|heera|lekha|veena|female|zira|hazel|samantha|karen|victoria|ava|emma|jenny|aria|michelle|neerja/i;
 
-        if (pool.length > 0) {
-          if (role === 'officer') {
-            const baritone = pool.find((v) => /hemant|madhur|prabhat|rishi|male/i.test(v.name));
-            utter.voice = baritone ?? pool[0];
-          } else {
-            utter.voice = pool[hash % pool.length];
+        const pickVoice = (): SpeechSynthesisVoice | undefined => {
+          if (pool.length === 0) return undefined;
+          if (isFemaleRole) {
+            const fem = pool.filter((v) => femaleRegex.test(v.name) || !maleRegex.test(v.name));
+            return fem.length > 0 ? fem[hash % fem.length] : pool[0];
           }
-          utter.lang = utter.voice?.lang?.toLowerCase().startsWith('hi') ? utter.voice.lang : 'hi-IN';
-        } else {
-          utter.lang = 'hi-IN';
-        }
+          const malePreferred = pool.filter((v) => maleRegex.test(v.name) && !femaleRegex.test(v.name));
+          if (malePreferred.length > 0) {
+            const roleOffset =
+              role === 'judge' ? 0 : role === 'inspector' ? 1 : role === 'warden' ? 2 : role === 'officer' ? 3 : hash;
+            return malePreferred[roleOffset % malePreferred.length];
+          }
+          const nonFemale = pool.filter((v) => !femaleRegex.test(v.name));
+          if (nonFemale.length > 0) {
+            return nonFemale[hash % nonFemale.length];
+          }
+          return pool[hash % pool.length];
+        };
 
-        window.speechSynthesis.speak(utter);
-        spokeTts = hiAll.length > 0;
+        // Cancel cleanly first, then wait 55ms before calling speak() to avoid Chromium mid-sentence drop bug
+        window.speechSynthesis.cancel();
+
+        this.speechTimerId = window.setTimeout(() => {
+          this.speechTimerId = null;
+          if (seq !== this.speechSeq) return;
+          try {
+            const utter = new SpeechSynthesisUtterance(cleanText);
+            const chosenVoice = pickVoice();
+            if (chosenVoice) {
+              utter.voice = chosenVoice;
+              utter.lang = chosenVoice.lang?.toLowerCase().startsWith('hi') ? chosenVoice.lang : 'hi-IN';
+            } else {
+              utter.lang = 'hi-IN';
+            }
+            utter.rate = rate;
+            utter.pitch = pitch;
+            utter.volume = Math.max(0.25, Math.min(1, this.settings.masterVolume));
+
+            const finish = () => {
+              if (seq !== this.speechSeq) return;
+              this.activeSpeaking = false;
+              this.clearSpeechTimers();
+            };
+            utter.onend = finish;
+            utter.onerror = finish;
+
+            // Keep Chromium SpeechSynthesis awake during longer courtroom/cutscene sentences
+            this.keepAliveId = window.setInterval(() => {
+              if (seq !== this.speechSeq) return;
+              try {
+                if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
+                  window.speechSynthesis.resume();
+                } else if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) {
+                  finish();
+                }
+              } catch {
+                // ignore
+              }
+            }, 3500);
+
+            this.speechMaxTimeoutId = window.setTimeout(finish, estDurationMs);
+            window.speechSynthesis.speak(utter);
+          } catch {
+            if (seq === this.speechSeq) {
+              this.activeSpeaking = false;
+              this.clearSpeechTimers();
+            }
+          }
+        }, 55);
       } catch {
-        // Ignore if speechSynthesis unavailable
+        this.activeSpeaking = false;
       }
+    } else if (typeof window !== 'undefined') {
+      this.speechMaxTimeoutId = Number(
+        (window as Window).setTimeout(() => {
+          if (seq === this.speechSeq) {
+            this.activeSpeaking = false;
+          }
+        }, estDurationMs),
+      );
+    } else {
+      this.activeSpeaking = false;
     }
 
-    // Play retro voice cadence if enabled OR as expressive audible guarantee when browser lacks Hindi TTS voices
-    if (this.settings.retroVoiceBlips || !spokeTts) {
-      this.playRetroVoiceBlips(textOrDevanagari, blipFreq, blipWave);
+    if (this.settings.retroVoiceBlips || !hasHiVoices) {
+      this.playRetroVoiceBlips(cleanText, blipFreq, blipWave);
     }
   }
 
@@ -1107,6 +1347,10 @@ class SoundEngine {
   }
 
   public stopPoliceVoice(): void {
+    this.speechSeq++;
+    this.activeSpeaking = false;
+    this.minSubtitleHoldUntil = 0;
+    this.clearSpeechTimers();
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       try {
         window.speechSynthesis.cancel();

@@ -12,6 +12,8 @@ import {
   CourtroomDialogueTurn,
   CourtroomState,
   CourtroomVerdictKind,
+  CustodyCutsceneHud,
+  CustodyPhase,
   DAYS_PER_YEAR,
   DEATH_FEE_INR,
   DEFAULT_SETTINGS,
@@ -31,6 +33,7 @@ import {
   JailHudState,
   LAWYER_FEE_1_2_INR,
   LAWYER_FEE_3_INR,
+  LicenseRevokedPromptHud,
   MAX_MEDKITS,
   MEDKIT_HEAL_AMOUNT,
   MEDKIT_PRICE_INR,
@@ -52,6 +55,7 @@ import {
   StreetStallMenuItem,
   TimeOfDayHud,
   TimePhase,
+  URGENT_THANA_LICENSE_RENEWAL_INR,
   VehicleKind,
   WANTED_TIER_TITLES,
   WEAPON_ORDER,
@@ -72,6 +76,7 @@ import {
   CentralJailRig,
   ChaiStallInfo,
   CircleCollider,
+  CourtComplexRig,
   CourtroomStageRig,
   DogRig,
   HelicopterRig,
@@ -89,6 +94,7 @@ import {
   createHumanoidModel,
   createIndianDogModel,
   createPoliceChopperModel,
+  createPrisonerVan,
   createRescueVanModel,
   createRoadblockBarricade,
   createVehicleModel,
@@ -406,7 +412,29 @@ export class GameEngine {
   private interiorLightSpots: InteriorLightSpot[] = [];
   private interiorLight!: THREE.PointLight;
   private jailRig: CentralJailRig | null = null;
+  private courtRig: CourtComplexRig | null = null;
   private courtroomStage: CourtroomStageRig | null = null;
+  private prisonerVan: VehicleRig | null = null;
+  private custodyCutscene: {
+    phase: CustodyPhase;
+    timer: number;
+    duration: number;
+    stepIndex: number;
+    title: string;
+    subtitle: string;
+    stepLabel: string;
+    startX: number;
+    startZ: number;
+    endX: number;
+    endZ: number;
+  } | null = null;
+  private pendingLicenseRevocation = 0;
+  private licenseRevokedPrompt: LicenseRevokedPromptHud | null = null;
+  private thanaPrisonerActiveCount = 0;
+  private thanaPrisonerShuffleTimer = 42;
+  private thanaChatterCooldown = 3.2;
+  private thanaAmbientBubbleTimer = 4.5;
+  private courtAmbientBubbleTimer = 5.5;
   private signalTime = 0;
   private redLightViolations = 0;
   private challanCooldown = 0;
@@ -904,7 +932,9 @@ export class GameEngine {
     this.nightEmissiveMats = env.nightEmissiveMats;
     this.interiorLightSpots = env.interiorLightSpots;
     this.jailRig = env.jailRig;
+    this.courtRig = env.courtRig;
     this.courtroomStage = createDistrictCourtroomStage(this.scene);
+    this.randomizeThanaPrisoners(true);
     this.shopInteractMeshes = [
       ...this.shopDisplays.map((d) => d.hitMesh),
       ...(this.shopDealer ? [this.shopDealer.hitMesh] : []),
@@ -1787,6 +1817,14 @@ export class GameEngine {
       return;
     }
 
+    if (this.mode === 'CUSTODY') {
+      if (code === 'Space' || code === 'Enter') {
+        e.preventDefault();
+        this.skipCustodyCutscene();
+      }
+      return;
+    }
+
     if (this.mode === 'COURTROOM') {
       if (code === 'Space' || code === 'Enter') {
         e.preventDefault();
@@ -1829,7 +1867,7 @@ export class GameEngine {
       return;
     }
 
-    if (this.mode !== 'PLAYING') return;
+    if (this.mode !== 'PLAYING' || this.licenseRevokedPrompt?.active) return;
 
     this.keys.add(code);
     soundEngine.unlock();
@@ -1980,8 +2018,8 @@ export class GameEngine {
           stall.vendorName,
           'citizen',
           808,
-          `Aaiye bhai sahab! ${stall.name} par swadisht nashta taiyaar hai.`,
-          `आइए भाई साहब! ${stall.name} पर आपका स्वागत है।`,
+          `Aaiye bhai sahab! ${stall.name} par garma-garam nashta taiyaar hai.`,
+          `आइए भाई साहब! ${stall.name} पर गरमा-गरम नाश्ता तैयार है।`,
         );
         this.releasePointerLock();
         this.callbacks.onOpenStall?.({
@@ -2103,7 +2141,7 @@ export class GameEngine {
       }
       return;
     }
-    if (this.mode !== 'PLAYING') return;
+    if (this.mode !== 'PLAYING' || this.licenseRevokedPrompt?.active) return;
     if (this.weaponWheelOpen) {
       if (e.button === 0) {
         this.setWeaponWheelOpen(false);
@@ -2595,7 +2633,7 @@ export class GameEngine {
       'citizen',
       812,
       `Shukriya bhai! Garma-garam ${item.name} enjoy karo.`,
-      `शुक्रिया भाई! आपका ऑर्डर तैयार है, आनंद लीजिए।`,
+      `शुक्रिया भाई! गरमा-गरम ${item.name} एन्जॉय करो।`,
     );
     this.callbacks.onToast({
       text: `${item.name} (+${item.hpGain} HP & Stamina) · -${formatRs(item.price)}`,
@@ -2639,7 +2677,8 @@ export class GameEngine {
       'narrator',
       782,
       'Badhai ho! Aapka Bharat Arms License approve ho gaya hai. Ab aap kanooni taur par hathiyar rakh sakte hain.',
-      'बधाई हो! आपका आर्म्स लाइसेंस अप्रूव हो गया है।',
+      'बधाई हो! आपका भारत आर्म्स लाइसेंस अप्रूव हो गया है। अब आप कानूनी तौर पर हथियार रख सकते हैं।',
+      'high',
     );
     this.callbacks.onToast({
       text: 'VALID ARMS LICENSE ISSUED · Police check par [E] dabakar dikha sakte ho',
@@ -2919,6 +2958,51 @@ export class GameEngine {
         return;
       }
 
+      // Bharat Police Thana No. 4 Duty Desk [E]
+      if (this.jailRig) {
+        const distThanaDesk = Math.hypot(
+          this.playerX - this.jailRig.thanaDeskPos.x,
+          this.playerZ - this.jailRig.thanaDeskPos.z,
+        );
+        if (distThanaDesk < 4.5) {
+          soundEngine.playUiClick();
+          soundEngine.playPoliceRadioChatter();
+          this.adsActive = false;
+          if (!this.hasGunLicense) {
+            this.licenseRevokedPrompt = {
+              active: true,
+              starsAtArrest: Math.max(3, this.pendingLicenseRevocation || 3),
+              urgentFee: URGENT_THANA_LICENSE_RENEWAL_INR,
+              standardFee: GUN_LICENSE_FEE_INR,
+            };
+            this.releasePointerLock();
+            this.speakWithSubtitle(
+              'Thana Duty Officer',
+              'inspector',
+              701,
+              'Aapka Arms License active nahi hai! Kya aap yahin Thana Desk par urgent renew karna chahte hain ya DM Office jaakar?',
+              'आपका आर्म्स लाइसेंस एक्टिव नहीं है! क्या आप यहीं थाना डेस्क पर अर्जेंट रिन्यू करना चाहते हैं या डीएम ऑफिस जाकर?',
+              'high',
+            );
+            this.emitHudSnapshot();
+          } else {
+            this.speakWithSubtitle(
+              'Thana Duty Officer',
+              'inspector',
+              701,
+              'Jai Hind! Bharat Thana No. 4 Duty Desk par sab control mein hai. Lockup aur patrolling jaari hai.',
+              'जय हिंद! भारत थाना नंबर चार ड्यूटी डेस्क पर सब कंट्रोल में है। लॉकअप और पेट्रोलिंग जारी है।',
+              'normal',
+            );
+            this.callbacks.onToast({
+              text: 'Thana No. 4 Duty Desk: Aapka Arms License valid hai (FIR Clear)',
+              tone: 'info',
+            });
+          }
+          return;
+        }
+      }
+
       // District Magistrate & Arms Licensing Office
       const distLicense = Math.hypot(this.playerX - (-92), this.playerZ - 32);
       const distLicenseEntrance = Math.hypot(this.playerX - this.licenseOfficePos.x, this.playerZ - this.licenseOfficePos.z);
@@ -2927,10 +3011,11 @@ export class GameEngine {
         this.adsActive = false;
         this.speakWithSubtitle(
           'Magistrate Clerk',
-          'citizen',
+          'clerk',
           781,
           'DM Arms Licensing Office mein swagat hai. Niyam aur range test pass karke apna license banwayein.',
           'डीएम आर्म्स लाइसेंसिंग ऑफिस में स्वागत है। नियम और रेंज टेस्ट पास करके अपना लाइसेंस बनवाएँ।',
+          'high',
         );
         this.releasePointerLock();
         this.callbacks.onOpenLicenseOffice?.();
@@ -2948,6 +3033,7 @@ export class GameEngine {
         777,
         'Royal Bank Of India mein aapka swagat hai. Police ko rescue mission mein madad chahiye.',
         'रॉयल बैंक ऑफ़ इंडिया में आपका स्वागत है। पुलिस को रेस्क्यू मिशन में मदद चाहिए।',
+        'high',
       );
       this.releasePointerLock();
       this.callbacks.onBankPrompt(false);
@@ -3078,8 +3164,16 @@ export class GameEngine {
       this.weaponWheelOpen = false;
       this.callbacks.onWeaponWheelChange(false);
     }
-    soundEngine.setPaused(next !== 'PLAYING' && next !== 'JAIL' && next !== 'COURTROOM');
-    if (next === 'PAUSED' || next === 'WASTED' || next === 'BUSTED' || next === 'COURTROOM') {
+    soundEngine.setPaused(
+      next !== 'PLAYING' && next !== 'JAIL' && next !== 'COURTROOM' && next !== 'CUSTODY',
+    );
+    if (
+      next === 'PAUSED' ||
+      next === 'WASTED' ||
+      next === 'BUSTED' ||
+      next === 'COURTROOM' ||
+      next === 'CUSTODY'
+    ) {
       soundEngine.setSirenActive(false);
       soundEngine.setChopperActive(false);
       this.saveGameState();
@@ -3352,12 +3446,27 @@ export class GameEngine {
   }
 
   private triggerBusted(reason: string): void {
-    if (this.bustedLock || this.wastedLock || this.mode === 'COURTROOM' || this.mode === 'JAIL') return;
+    if (
+      this.bustedLock ||
+      this.wastedLock ||
+      this.mode === 'COURTROOM' ||
+      this.mode === 'JAIL' ||
+      this.mode === 'CUSTODY'
+    ) {
+      return;
+    }
     this.bustedLock = true;
     this.bustedReason = reason;
     this.bustedConfiscated = [];
+    this.licenseRevokedPrompt = null;
 
     const starsAtArrest = clamp(Math.max(1, this.wantedLevel), 1, 5);
+    if (this.hasGunLicense && starsAtArrest >= 3) {
+      this.pendingLicenseRevocation = starsAtArrest;
+    } else {
+      this.pendingLicenseRevocation = 0;
+    }
+
     const hadSwatOrArmyKills = this.swatKilledCount > 0 || this.commandoKilledCount > 0;
     const charges: string[] = [];
     if (this.policeKilledCount > 0) charges.push('Police Officer par goli chalana / hamla (IPC 307 / 353)');
@@ -3377,10 +3486,10 @@ export class GameEngine {
       charges.push('Police nirdeshon ka ullanghan aur bhagne ki koshish');
     }
 
-    // Perform partial world cleanup before courtroom entry (preserves Bank, Time & parked cars)
+    // Perform partial world cleanup before custody/courtroom entry (preserves Bank, Time & parked cars)
     this.performPartialWorldCleanup(false);
 
-    if (!this.hasGunLicense) {
+    if (!this.hasGunLicense || starsAtArrest >= 3) {
       const lost: string[] = [];
       for (const wid of WEAPON_ORDER) {
         if (wid === 'fists') continue;
@@ -3390,9 +3499,11 @@ export class GameEngine {
         }
       }
       this.bustedConfiscated = lost;
-      this.ownedWeapons = new Set(['fists']);
-      this.activeWeapon = 'fists';
-      this.refreshPlayerWeaponMesh();
+      if (!this.hasGunLicense) {
+        this.ownedWeapons = new Set(['fists']);
+        this.activeWeapon = 'fists';
+        this.refreshPlayerWeaponMesh();
+      }
     }
 
     soundEngine.playPoliceWhistle();
@@ -3424,6 +3535,15 @@ export class GameEngine {
 
     const primaryCharge = charges[0];
     const secondaryCharge = charges[1] ?? 'Shanti bhang karne ka aarop';
+    const bailWords =
+      bailAmount === COURT_BAIL_FEE_INR
+        ? 'दो हज़ार पाँच सौ रुपये'
+        : bailAmount === 5000
+          ? 'पांच हज़ार रुपये'
+          : 'अठारह हज़ार रुपये';
+    const lawyerWords =
+      lawyerFee === LAWYER_FEE_1_2_INR ? 'एक हज़ार पाँच सौ रुपये' : 'तीन हज़ार रुपये';
+    const jailDayWords = jailDays === 1 ? 'एक दिन' : jailDays === 2 ? 'दो दिन' : 'तीन दिन';
 
     const dialogueTurns: CourtroomDialogueTurn[] = [
       {
@@ -3438,7 +3558,7 @@ export class GameEngine {
         speakerName: 'Inspector Vijay Rathore',
         title: 'Arresting Officer · Bharat Police',
         text: `Your Honour! Mulzim par "${primaryCharge}" aur "${secondaryCharge}" ke pakke saboot hain. Police ko iski gair-kanooni harkaton par sakht karwai karni padi.`,
-        tts: `योर ऑनर! मुल्ज़िम पर गंभीर आरोप और पक्के सबूत हैं। पुलिस को सख्त कार्रवाई करनी पड़ी।`,
+        tts: `योर ऑनर! मुल्ज़िम पर ${primaryCharge} और ${secondaryCharge} के पक्के सबूत हैं। पुलिस को इसकी गैर-कानूनी हरकतों पर सख्त कार्रवाई करनी पड़ी।`,
       },
       {
         speakerRole: 'lawyer',
@@ -3452,10 +3572,10 @@ export class GameEngine {
               : `My Lord, police ne aatmaraksha ke halaat ko badha-chadhakar dikhaya hai! Mere client ko ek mauka aur diya jaaye.`,
         tts:
           verdictKind === 'BAILABLE'
-            ? `माई-बाप, मेरे क्लाइंट ने गलती मानी है और यह ज़मानती मामला है। नरम ज़मानत पर रिहाई दी जाए।`
+            ? `माई-बाप, मेरे क्लाइंट ने गलती मानी है और पुलिस के साथ सहयोग किया! यह छोटा ज़मानती मामला है — नरम ज़मानत पर रिहाई दी जाए।`
             : verdictKind === 'HIGH_BAIL'
-              ? `योर ऑनर, भारी ज़मानत रखकर मेरे क्लाइंट को बेल मंजूर की जाए।`
-              : `माई लॉर्ड, मेरे क्लाइंट को एक मौका और दिया जाए।`,
+              ? `योर ऑनर, मामला गंभीर ज़रूर है पर मेरा क्लाइंट पहली बार पेश हुआ है। भारी ज़मानत रखकर बेल मंजूर की जाए।`
+              : `माई लॉर्ड, पुलिस ने आत्मरक्षा के हालात को बढ़ा-चढ़ाकर दिखाया है! मेरे क्लाइंट को एक मौका और दिया जाए।`,
       },
       {
         speakerRole: 'inspector',
@@ -3467,8 +3587,8 @@ export class GameEngine {
             : `Court sahab, shehar mein kanoon-vyavastha banaye rakhne ke liye is par bhari jurmana lagna zaroori hai.`,
         tts:
           verdictKind === 'NO_BAIL'
-            ? `सख्त ऐतराज़ योर ऑनर! मुल्ज़िम को बाहर छोड़ना शहर के लिए खतरा होगा, ज़मानत ख़ारिज करें!`
-            : `कोर्ट साहब, शहर में कानून-व्यवस्था के लिए भारी जुर्माना ज़रूरी है।`,
+            ? `सख्त ऐतराज़ योर ऑनर! मुल्ज़िम ने स्वाट आर्मी और कानून पर सीधा हमला किया है — इसको बाहर छोड़ना शहर के लिए खतरा होगा!`
+            : `कोर्ट साहब, शहर में कानून-व्यवस्था बनाए रखने के लिए इस पर भारी जुर्माना लगना ज़रूरी है।`,
       },
       {
         speakerRole: 'judge',
@@ -3482,10 +3602,10 @@ export class GameEngine {
               : `Sangeen aur gair-zamanati aarop saabit! Zamanat kharij! Mulzim ko seedha ${jailDays} din Bharat Central Jail bheja jaata hai!`,
         tts:
           verdictKind === 'BAILABLE'
-            ? `सभी पक्षों को सुनने के बाद ज़मानत मंजूर की जाती है!`
+            ? `सभी पक्षों को सुनने के बाद: ${bailWords} बेल बॉन्ड और ${lawyerWords} वकील फीस पर ज़मानत मंजूर की जाती है!`
             : verdictKind === 'HIGH_BAIL'
-              ? `आरोपों की गंभीरता देखते हुए भारी ज़मानत भरें, वरना जेल भेजा जाएगा!`
-              : `संगीन और गैर-ज़मानती आरोप! ज़मानत ख़ारिज! मुल्ज़िम को सीधा भारत सेंट्रल जेल भेजा जाता है!`,
+              ? `आरोपों की गंभीरता देखते हुए: ${bailWords} भारी ज़मानत और ${lawyerWords} वकील फीस भरो, वरना ${jailDayWords} भारत सेंट्रल जेल!`
+              : `संगीन और गैर-ज़मानती आरोप साबित! ज़मानत ख़ारिज! मुल्ज़िम को सीधा ${jailDayWords} भारत सेंट्रल जेल भेजा जाता है!`,
       },
     ];
 
@@ -3505,9 +3625,168 @@ export class GameEngine {
       argumentsFinished: false,
     };
     this.courtDialogueTimer = 0;
-    this.courtGavelTimer = 0.55;
 
-    // Position player standing inside wooden Kathgara facing Judge (-Z)
+    // Launch skippable Thana Lockup -> Police Van to Court cutscene
+    this.startCustodyCutscene('THANA_LOCKUP');
+  }
+
+  private ensurePrisonerVan(x: number, z: number, yaw: number): void {
+    if (!this.prisonerVan) {
+      this.prisonerVan = createPrisonerVan();
+      this.scene.add(this.prisonerVan.root);
+    }
+    this.prisonerVan.root.visible = true;
+    this.prisonerVan.root.position.set(x, 0, z);
+    this.prisonerVan.root.rotation.set(0, yaw, 0);
+  }
+
+  private removePrisonerVan(): void {
+    if (this.prisonerVan) {
+      this.scene.remove(this.prisonerVan.root);
+      this.prisonerVan = null;
+    }
+  }
+
+  private startCustodyCutscene(phase: CustodyPhase): void {
+    soundEngine.stopPoliceVoice();
+    this.adsActive = false;
+    this.npcSubtitle = null;
+    this.randomizeThanaPrisoners(false);
+
+    if (phase === 'THANA_LOCKUP') {
+      const cell = this.jailRig?.thanaLockupCellPos ?? new THREE.Vector3(-140.8, 0.28, 161.4);
+      this.playerX = cell.x;
+      this.playerY = cell.y;
+      this.playerZ = cell.z;
+      this.playerYaw = Math.PI;
+      this.playerRig.helmetMesh.visible = false;
+      this.playerRig.root.visible = true;
+      this.playerRig.root.position.set(cell.x, cell.y, cell.z);
+      this.playerRig.root.rotation.set(0, Math.PI, 0);
+      if (this.weaponMesh) this.weaponMesh.visible = false;
+      if (this.fpWeaponGroup) this.fpWeaponGroup.visible = false;
+      this.ensurePrisonerVan(-150, 179.5, -Math.PI / 2);
+      soundEngine.playJailDoorClang();
+      soundEngine.playPoliceRadioChatter();
+
+      const line =
+        'Thana No. 4 Lockup mein aa gaye ho! Ab Police Van mein baitho — District Court mein Judge sahab ke saamne pesh karna hai.';
+      const tts =
+        'थाना नंबर चार लॉकअप में आ गए हो! अब पुलिस वैन में बैठो — डिस्ट्रिक्ट कोर्ट में जज साहब के सामने पेश करना है।';
+      this.custodyCutscene = {
+        phase,
+        timer: 0,
+        duration: 4.0,
+        stepIndex: 1,
+        title: 'BHARAT POLICE THANA NO. 4 · LOCKUP',
+        subtitle: line,
+        stepLabel: 'Step 1 of 4 · Thana No. 4 Lockup & FIR Processing',
+        startX: cell.x,
+        startZ: cell.z,
+        endX: cell.x,
+        endZ: cell.z,
+      };
+      this.setMode('CUSTODY');
+      soundEngine.speakNpcLine('inspector', 704, tts, 'high');
+    } else if (phase === 'VAN_TO_COURT') {
+      this.playerRig.root.visible = false;
+      this.ensurePrisonerVan(-150, 180, -Math.PI / 2);
+      soundEngine.playJailDoorClang();
+      soundEngine.playPoliceRadioChatter();
+
+      const line =
+        'Police Van District Court ki taraf rawana ho gayi hai. Kathgare mein Judge sahab ke saamne apna paksh rakhna.';
+      const tts =
+        'पुलिस वैन डिस्ट्रिक्ट कोर्ट की तरफ रवाना हो गई है। कठघरे में जज साहब के सामने अपना पक्ष रखना।';
+      this.custodyCutscene = {
+        phase,
+        timer: 0,
+        duration: 4.6,
+        stepIndex: 2,
+        title: 'PRISONER VAN · ESCORT TO DISTRICT COURT',
+        subtitle: line,
+        stepLabel: 'Step 2 of 4 · Barred Police Van Transit → District Court',
+        startX: -150,
+        startZ: 180,
+        endX: -90,
+        endZ: 108,
+      };
+      this.setMode('CUSTODY');
+      soundEngine.speakNpcLine('inspector', 705, tts, 'high');
+    } else if (phase === 'VAN_TO_THANA_RELEASE') {
+      this.playerRig.root.visible = false;
+      this.ensurePrisonerVan(-90, 108, 0);
+      soundEngine.playPoliceRadioChatter();
+
+      const line =
+        'Bail manzoor ho gayi hai! Police Van aapko wapas Bharat Police Thana No. 4 ke gate par chhodne ja rahi hai.';
+      const tts =
+        'बेल मंजूर हो गई है! पुलिस वैन आपको वापस भारत पुलिस थाना नंबर चार के गेट पर छोड़ने जा रही है।';
+      this.custodyCutscene = {
+        phase,
+        timer: 0,
+        duration: 4.0,
+        stepIndex: 4,
+        title: 'PRISONER VAN · RETURN TO THANA FOR RELEASE',
+        subtitle: line,
+        stepLabel: 'Step 4 of 4 · Escort Van → Bharat Thana No. 4 Release Gate',
+        startX: -90,
+        startZ: 108,
+        endX: -150,
+        endZ: 178,
+      };
+      this.setMode('CUSTODY');
+      soundEngine.speakNpcLine('officer', 706, tts, 'high');
+    } else {
+      // VAN_TO_JAIL
+      this.playerRig.root.visible = false;
+      this.ensurePrisonerVan(-90, 108, 0);
+      soundEngine.playPoliceWhistle();
+      soundEngine.playPoliceRadioChatter();
+
+      const line =
+        'Court ke aadesh se Police Van aapko seedha Bharat Central Jail le ja rahi hai!';
+      const tts =
+        'कोर्ट के आदेश से पुलिस वैन आपको सीधा भारत सेंट्रल जेल ले जा रही है!';
+      this.custodyCutscene = {
+        phase,
+        timer: 0,
+        duration: 4.2,
+        stepIndex: 4,
+        title: 'PRISONER VAN · TRANSFER TO BHARAT CENTRAL JAIL',
+        subtitle: line,
+        stepLabel: 'Step 4 of 4 · Heavy Escort Van → Bharat Central Jail',
+        startX: -90,
+        startZ: 108,
+        endX: -150,
+        endZ: 176,
+      };
+      this.setMode('CUSTODY');
+      soundEngine.speakNpcLine('inspector', 707, tts, 'high');
+    }
+  }
+
+  public skipCustodyCutscene(): void {
+    const cc = this.custodyCutscene;
+    if (!cc || this.mode !== 'CUSTODY') return;
+    soundEngine.stopPoliceVoice();
+    if (cc.phase === 'THANA_LOCKUP' || cc.phase === 'VAN_TO_COURT') {
+      this.enterCourtroomFromCustody();
+    } else if (cc.phase === 'VAN_TO_THANA_RELEASE') {
+      this.finalizeThanaRelease();
+    } else {
+      this.finalizeEnterCentralJail();
+    }
+  }
+
+  private enterCourtroomFromCustody(): void {
+    this.custodyCutscene = null;
+    this.removePrisonerVan();
+    if (!this.courtroomStage || !this.courtroomState) {
+      this.finalizeThanaRelease();
+      return;
+    }
+
     const kp = this.courtroomStage.kathgaraPos;
     this.playerX = kp.x;
     this.playerY = kp.y;
@@ -3520,9 +3799,140 @@ export class GameEngine {
     this.playerRig.root.position.set(kp.x, kp.y, kp.z);
     this.playerRig.root.rotation.set(0, 0, 0);
 
+    this.courtDialogueTimer = 0;
+    this.courtGavelTimer = 0.55;
     this.setMode('COURTROOM');
     soundEngine.playCourtGavel();
     this.speakCurrentCourtTurn();
+  }
+
+  private triggerLicenseRevokedFlow(): void {
+    const stars = Math.max(3, this.pendingLicenseRevocation || 3);
+    this.pendingLicenseRevocation = 0;
+    this.hasGunLicense = false;
+    this.licenseRevokedPrompt = {
+      active: true,
+      starsAtArrest: stars,
+      urgentFee: URGENT_THANA_LICENSE_RENEWAL_INR,
+      standardFee: GUN_LICENSE_FEE_INR,
+    };
+    this.releasePointerLock();
+    const msg =
+      `Aapka Arms License ${stars}★ case ke karan radd/expire ho gaya hai! Kya aap ise abhi yahin renew karna chahte hain ya DM Office jaakar?`;
+    const tts =
+      `आपका आर्म्स लाइसेंस ${stars} स्टार केस के कारण रद्द या एक्सपायर हो गया है! क्या आप इसे अभी यहीं रिन्यू करना चाहते हैं या डीएम ऑफिस जाकर?`;
+    this.speakWithSubtitle('Thana Duty Officer', 'inspector', 701, msg, tts, 'high');
+    this.saveGameState();
+    this.emitHudSnapshot();
+  }
+
+  private finalizeThanaRelease(): void {
+    this.custodyCutscene = null;
+    this.removePrisonerVan();
+    this.courtroomState = null;
+    this.bustedLock = false;
+
+    const releasePos = this.jailRig?.releaseOutsidePos ?? new THREE.Vector3(-150, 0, 176.5);
+    const safePos = this.resolveCollisions(releasePos.x, releasePos.z, 0.5);
+    this.playerX = safePos.x;
+    this.playerY = 0;
+    this.playerZ = safePos.z;
+    this.playerYaw = Math.PI;
+    this.camYaw = Math.PI;
+    this.playerRig.helmetMesh.visible = this.hasHelmet && this.helmetOn;
+    this.playerRig.root.visible = !this.firstPerson;
+    this.playerRig.root.position.set(this.playerX, 0, this.playerZ);
+    this.playerRig.root.rotation.set(0, this.playerYaw, 0);
+    this.refreshPlayerWeaponMesh();
+
+    this.setMode('PLAYING');
+    this.callbacks.onToast({
+      text: 'Bharat Police Thana No. 4 ke baahar riha ho gaye (0★)!',
+      tone: 'cash',
+    });
+
+    if (this.pendingLicenseRevocation > 0) {
+      this.triggerLicenseRevokedFlow();
+    } else {
+      this.saveGameState();
+      this.emitHudSnapshot();
+    }
+  }
+
+  public renewLicenseAtThana(source: 'cash' | 'bank'): { ok: boolean; message: string } {
+    const fee = URGENT_THANA_LICENSE_RENEWAL_INR;
+    if (source === 'bank') {
+      this.syncBankInterest(true);
+      const bankSav = this.savingsPrincipal + this.savingsInterest;
+      if (bankSav < fee) {
+        this.callbacks.onToast({
+          text: `Royal Bank Savings mein sirf ${formatRsExact(bankSav)} hai (${formatRs(fee)} chahiye)`,
+          tone: 'warn',
+        });
+        return { ok: false, message: `Need ${formatRs(fee)} in Royal Bank Savings.` };
+      }
+      const ratio = fee / Math.max(0.01, bankSav);
+      this.savingsInterest = Math.max(0, this.savingsInterest * (1 - ratio));
+      this.savingsPrincipal = Math.max(0, this.savingsPrincipal * (1 - ratio));
+      this.recordPassbook(
+        'SAVINGS',
+        'WITHDRAW',
+        fee,
+        this.savingsPrincipal + this.savingsInterest,
+        'Thana Desk Urgent Arms License Renewal',
+      );
+    } else {
+      if (this.playerCash < fee) {
+        this.callbacks.onToast({
+          text: `Wallet mein sirf ${formatRs(this.playerCash)} hai (${formatRs(fee)} chahiye)`,
+          tone: 'warn',
+        });
+        return { ok: false, message: `Need ${formatRs(fee)} cash.` };
+      }
+      this.playerCash -= fee;
+    }
+
+    this.hasGunLicense = true;
+    this.pendingLicenseRevocation = 0;
+    this.licenseRevokedPrompt = null;
+    this.licenseGraceTimer = 25;
+    soundEngine.playLicenseApproved();
+    this.speakWithSubtitle(
+      'Thana Duty Officer',
+      'inspector',
+      701,
+      'Aapka Arms License yahin Thana Desk par urgent renew ho gaya hai! Ab kanoon ka paalan karein.',
+      'आपका आर्म्स लाइसेंस यहीं थाना डेस्क पर अर्जेंट रिन्यू हो गया है! अब कानून का पालन करें।',
+      'high',
+    );
+    this.callbacks.onToast({
+      text: `Arms License Renewed! -${formatRs(fee)} (${source === 'bank' ? 'Royal Bank' : 'Cash'})`,
+      tone: 'cash',
+    });
+    this.saveGameState();
+    this.emitHudSnapshot();
+    return { ok: true, message: 'Arms License renewed at Thana Desk!' };
+  }
+
+  public dismissLicenseRevokedToDm(): void {
+    this.licenseRevokedPrompt = null;
+    this.hasGunLicense = false;
+    this.pendingLicenseRevocation = 0;
+    this.setWaypoint(-90, 46, 'DM Office (Arms & Driving License)');
+    this.speakWithSubtitle(
+      'Thana Duty Officer',
+      'inspector',
+      701,
+      'Theek hai, DM Office ka raasta GPS par set kar diya hai. Wahan jaakar standard fee mein renew karwa lein.',
+      'ठीक है, डीएम ऑफिस का रास्ता जीपीएस पर सेट कर दिया है। वहाँ जाकर स्टैंडर्ड फीस में रिन्यू करवा लें।',
+      'normal',
+    );
+    this.callbacks.onToast({
+      text: 'GPS Waypoint set to DM Office (-90, 46) for ₹25,000 standard license renewal',
+      tone: 'info',
+    });
+    this.saveGameState();
+    this.emitHudSnapshot();
   }
 
   private speakCurrentCourtTurn(): void {
@@ -3530,8 +3940,7 @@ export class GameEngine {
     if (!cs) return;
     const turn = cs.dialogueTurns[cs.dialogueIndex];
     if (!turn) return;
-    const role = turn.speakerRole === 'inspector' ? 'officer' : turn.speakerRole;
-    soundEngine.speakNpcLine(role, cs.dialogueIndex + 300, turn.tts);
+    soundEngine.speakNpcLine(turn.speakerRole, cs.dialogueIndex + 300, turn.tts, 'high');
   }
 
   public advanceCourtroomDialogue(): void {
@@ -3605,38 +4014,31 @@ export class GameEngine {
       this.playerCash -= due;
     }
 
-    this.courtroomState = null;
-    this.bustedLock = false;
     soundEngine.playCashPickup();
-
-    const safePos = this.resolveCollisions(this.courtExitPos.x, this.courtExitPos.z, 0.5);
-    this.playerX = safePos.x;
-    this.playerY = 0;
-    this.playerZ = safePos.z;
-    this.playerYaw = 0;
-    this.camYaw = 0;
-    this.playerRig.helmetMesh.visible = this.hasHelmet && this.helmetOn;
-    this.playerRig.root.visible = !this.firstPerson;
-    this.playerRig.root.position.set(this.playerX, 0, this.playerZ);
-    this.refreshPlayerWeaponMesh();
-
     this.saveGameState();
-    this.setMode('PLAYING');
     this.callbacks.onToast({
-      text: `Zamanat Manzoor! -${formatRs(due)} (${source === 'bank' ? 'Royal Bank' : 'Cash'}) · Court ke baahar riha`,
+      text: `Zamanat Manzoor! -${formatRs(due)} (${source === 'bank' ? 'Royal Bank' : 'Cash'}) · Van Thana Gate ja rahi hai`,
       tone: 'cash',
     });
-    return { ok: true, message: `Paid ${formatRs(due)}. Released outside District Court!` };
+    this.startCustodyCutscene('VAN_TO_THANA_RELEASE');
+    return { ok: true, message: `Paid ${formatRs(due)}. Police Van returning to Thana Gate!` };
   }
 
   public enterCentralJailFromCourt(): void {
+    if (!this.courtroomState) return;
+    this.startCustodyCutscene('VAN_TO_JAIL');
+  }
+
+  private finalizeEnterCentralJail(): void {
+    this.custodyCutscene = null;
+    this.removePrisonerVan();
     const cs = this.courtroomState;
     const stars = cs?.starsAtArrest ?? 2;
     const sentenceDaysTotal = cs?.jailDays ?? 2;
     this.courtroomState = null;
     this.bustedLock = false;
 
-    // Escrow licensed weapons safely during prison stay (returned upon release/escape)
+    // Escrow remaining licensed weapons safely during prison stay (returned unless revoked at 3+★)
     this.jailEscrowedWeapons = [];
     this.jailEscrowedAmmo = {};
     for (const wid of WEAPON_ORDER) {
@@ -3664,7 +4066,7 @@ export class GameEngine {
     } else {
       this.playerX = -150;
       this.playerY = 0;
-      this.playerZ = 154;
+      this.playerZ = 148;
     }
     this.playerYaw = 0;
     this.camYaw = 0;
@@ -3698,12 +4100,13 @@ export class GameEngine {
       920,
       'Bharat Central Jail mein swagat hai! Saza poori karo, workshop mein kaam karo, ya kismat aazmao!',
       'भारत सेंट्रल जेल में स्वागत है! सज़ा पूरी करो, वर्कशॉप में काम करो, या किस्मत आज़माओ!',
+      'high',
     );
   }
 
   private releaseFromJail(exitMode: 'LEGAL' | 'BRIBE' | 'ESCAPE'): void {
     const rig = this.jailRig;
-    // Restore escrowed licensed firearms
+    // Restore escrowed weapons (if license won't be revoked on release, or user keeps them safely until renewal)
     for (const wid of this.jailEscrowedWeapons) {
       this.ownedWeapons.add(wid);
       this.ammo[wid] = Math.max(this.ammo[wid], this.jailEscrowedAmmo[wid] ?? 0);
@@ -3778,7 +4181,8 @@ export class GameEngine {
         'narrator',
         921,
         'JAIL BREAK ALERT! Kaidi East Gate tod kar bhaag gaya! Sabhi SWAT units ghera daalo!',
-        'जेल ब्रेक अलर्ट! कैदी ईस्ट गेट तोड़कर भाग गया! सभी यूनिट्स घेरा डालो!',
+        'जेल ब्रेक अलर्ट! कैदी ईस्ट गेट तोड़कर भाग गया! सभी स्वाट यूनिट्स घेरा डालो!',
+        'high',
       );
       this.callbacks.onToast({
         text: 'PRISON BREAK! Aap jail tod kar bhaage — 3★ SWAT Chase Shuru!',
@@ -3786,6 +4190,12 @@ export class GameEngine {
       });
     }
     this.playerRig.root.position.set(this.playerX, 0, this.playerZ);
+
+    if (exitMode !== 'ESCAPE' && this.pendingLicenseRevocation > 0) {
+      this.triggerLicenseRevokedFlow();
+      return;
+    }
+
     this.saveGameState();
     this.emitHudSnapshot();
   }
@@ -3910,6 +4320,8 @@ export class GameEngine {
         'banker',
         777,
         'Aapka karz pachaas hazaar rupaye ho gaya. Police ke saath sadak ke kutton ko bachane ka mission karo — karz maaf aur das hazaar advance milenge.',
+        'आपका कर्ज़ पचास हज़ार रुपये हो गया। पुलिस के साथ सड़क के कुत्तों को बचाने का मिशन करो — कर्ज़ माफ़ और दस हज़ार एडवांस मिलेंगे।',
+        'high',
       );
       this.callbacks.onBankPrompt(true);
       this.callbacks.onToast({
@@ -3953,6 +4365,8 @@ export class GameEngine {
         'banker',
         777,
         'Aapka karz pachaas hazaar rupaye ho gaya. Police ke saath sadak ke kutton ko bachane ka mission karo — karz maaf aur das hazaar advance milenge.',
+        'आपका कर्ज़ पचास हज़ार रुपये हो गया। पुलिस के साथ सड़क के कुत्तों को बचाने का मिशन करो — कर्ज़ माफ़ और दस हज़ार एडवांस मिलेंगे।',
+        'high',
       );
       this.callbacks.onBankPrompt(true);
       this.callbacks.onToast({
@@ -4123,6 +4537,8 @@ export class GameEngine {
       'narrator',
       101,
       'Bank ke baahar police ki gaadi aur hathiyar taiyaar hain. Nakshe ke raaste se jaakar sadak ke kutton ko bachao.',
+      'बैंक के बाहर पुलिस की गाड़ी और हथियार तैयार हैं। नक्शे के रास्ते से जाकर सड़क के कुत्तों को बचाओ।',
+      'high',
     );
     this.callbacks.onToast({
       text: 'Mission Shuru: Royal Bank ke baahar Police Car wait kar rahi hai ([F] dabakar chalayein)',
@@ -4239,6 +4655,8 @@ export class GameEngine {
       'narrator',
       102,
       'Mission kamyaab! Chaubis sadak ke kutte aazaad ho gaye. Ek lakh rupaye aapke khaate mein jama ho gaye.',
+      'मिशन कामयाब! चौबीस सड़क के कुत्ते आज़ाद हो गए। एक लाख रुपये आपके खाते में जमा हो गए।',
+      'high',
     );
     this.emitHudSnapshot();
   }
@@ -4395,10 +4813,15 @@ export class GameEngine {
     this.blessedTimer = 0;
     this.prayerAnim = null;
     this.courtroomState = null;
+    this.custodyCutscene = null;
+    this.removePrisonerVan();
+    this.pendingLicenseRevocation = 0;
+    this.licenseRevokedPrompt = null;
     this.jailState = null;
     this.jailEscrowedWeapons = [];
     this.jailEscrowedAmmo = {};
     this.disabledColliders.clear();
+    this.randomizeThanaPrisoners(true);
     this.clearWaypoint(true);
     this.applyTimeOfDayLighting();
     this.updateSettings({ ...DEFAULT_SETTINGS });
@@ -5079,13 +5502,26 @@ export class GameEngine {
 
   private speakWithSubtitle(
     speaker: string,
-    role: 'officer' | 'enforcer' | 'dealer' | 'citizen' | 'banker' | 'narrator' | 'judge' | 'lawyer' | 'warden',
+    role:
+      | 'officer'
+      | 'inspector'
+      | 'enforcer'
+      | 'dealer'
+      | 'citizen'
+      | 'banker'
+      | 'narrator'
+      | 'judge'
+      | 'lawyer'
+      | 'warden'
+      | 'clerk',
     seedId: number,
     displayText: string,
     ttsText?: string,
+    priority: 'high' | 'normal' | 'low' = 'normal',
   ): void {
-    soundEngine.speakNpcLine(role, seedId, ttsText ?? displayText);
-    this.npcSubtitle = { speaker, text: displayText, ttl: 4.0 };
+    soundEngine.speakNpcLine(role, seedId, ttsText ?? displayText, priority);
+    const estTtl = Math.min(9.5, Math.max(3.6, (ttsText ?? displayText).length * 0.085));
+    this.npcSubtitle = { speaker, text: displayText, ttl: estTtl };
   }
 
   public replyToChai(accept: boolean): void {
@@ -5477,6 +5913,8 @@ export class GameEngine {
             'narrator',
             103,
             'Sabhi gunde khatam! Rescue van ke peeche jaakar darwaza kholo.',
+            'सभी गुंडे ख़त्म! रेस्क्यू वैन के पीछे जाकर दरवाज़ा खोलो।',
+            'high',
           );
           this.callbacks.onToast({
             text: 'Paanchon Dog Mafia khatam! Rescue Van ka darwaza kholo (E)',
@@ -5551,7 +5989,10 @@ export class GameEngine {
 
     if (clamped > 0 && prev === 0) {
       soundEngine.setSirenActive(true);
-      soundEngine.speakPoliceLine('warn');
+      const spoken = soundEngine.speakPoliceLine('warn');
+      if (spoken) {
+        this.npcSubtitle = { speaker: 'Police', text: spoken.text, ttl: 3.6 };
+      }
     }
     if (clamped >= 4) {
       soundEngine.setChopperActive(true);
@@ -6403,6 +6844,9 @@ export class GameEngine {
       const simDt = this.weaponWheelOpen ? rawDt * 0.16 : rawDt;
       this.stepSimulation(simDt);
       this.updateDynamicInteriorLight();
+    } else if (this.mode === 'CUSTODY') {
+      this.stepCustodyCutscene(rawDt);
+      this.updateDynamicInteriorLight();
     } else if (this.mode === 'COURTROOM') {
       this.stepCourtroom(rawDt);
       this.updateDynamicInteriorLight();
@@ -6702,6 +7146,104 @@ export class GameEngine {
     }
   }
 
+  private stepCustodyCutscene(dt: number): void {
+    const cc = this.custodyCutscene;
+    if (!cc) return;
+    this.stepTimeOfDay(dt);
+    this.stepThanaAndCourtActors(dt, true);
+    cc.timer += dt;
+
+    const p = clamp(cc.timer / Math.max(0.1, cc.duration), 0, 1);
+
+    if (cc.phase === 'THANA_LOCKUP') {
+      const cell = this.jailRig?.thanaLockupCellPos ?? new THREE.Vector3(-140.8, 0.28, 161.4);
+      const t = performance.now() * 0.002;
+      this._camDesired.set(cell.x - 1.2 + Math.sin(t) * 0.4, 2.35, cell.z + 5.8);
+      this._camTarget.set(cell.x, 1.35, cell.z);
+      this.camera.position.lerp(this._camDesired, 1 - Math.exp(-5 * dt));
+      this.camera.lookAt(this._camTarget);
+    } else {
+      // Drive the barred Prisoner Van smoothly along city road grid
+      let vx = cc.startX;
+      let vz = cc.startZ;
+      let yaw = 0;
+      if (cc.phase === 'VAN_TO_COURT') {
+        // (-150, 180) -> East to (-90, 180) -> North to (-90, 108)
+        if (p < 0.48) {
+          const k = p / 0.48;
+          vx = THREE.MathUtils.lerp(-150, -90, k);
+          vz = 180;
+          yaw = -Math.PI / 2;
+        } else {
+          const k = (p - 0.48) / 0.52;
+          vx = -90;
+          vz = THREE.MathUtils.lerp(180, 108, k);
+          yaw = 0;
+        }
+      } else {
+        // (-90, 108) -> South to (-90, 180) -> West to (-150, 178)
+        if (p < 0.52) {
+          const k = p / 0.52;
+          vx = -90;
+          vz = THREE.MathUtils.lerp(108, 180, k);
+          yaw = Math.PI;
+        } else {
+          const k = (p - 0.52) / 0.48;
+          vx = THREE.MathUtils.lerp(-90, -150, k);
+          vz = THREE.MathUtils.lerp(180, cc.endZ, k);
+          yaw = Math.PI / 2;
+        }
+      }
+      if (this.prisonerVan) {
+        this.prisonerVan.root.position.set(vx, 0, vz);
+        this.prisonerVan.root.rotation.set(0, yaw, 0);
+        for (const w of this.prisonerVan.wheels) {
+          w.rotation.x -= dt * 10;
+        }
+        const flash = Math.sin(performance.now() * 0.018) > 0;
+        if (this.prisonerVan.lightBarRed) {
+          (this.prisonerVan.lightBarRed.material as THREE.MeshBasicMaterial).color.setHex(
+            flash ? 0xff2222 : 0x550000,
+          );
+        }
+        if (this.prisonerVan.lightBarBlue) {
+          (this.prisonerVan.lightBarBlue.material as THREE.MeshBasicMaterial).color.setHex(
+            !flash ? 0x3b82f6 : 0x0f172a,
+          );
+        }
+      }
+      const fwdX = -Math.sin(yaw);
+      const fwdZ = -Math.cos(yaw);
+      this._camDesired.set(vx - fwdX * 10.5 + 3.2, 4.4, vz - fwdZ * 10.5);
+      this._camTarget.set(vx, 1.4, vz);
+      this.camera.position.lerp(this._camDesired, 1 - Math.exp(-5 * dt));
+      this.camera.lookAt(this._camTarget);
+    }
+
+    if (cc.timer >= cc.duration && !soundEngine.isSpeaking()) {
+      if (cc.phase === 'THANA_LOCKUP') {
+        this.startCustodyCutscene('VAN_TO_COURT');
+        return;
+      }
+      if (cc.phase === 'VAN_TO_COURT') {
+        this.enterCourtroomFromCustody();
+        return;
+      }
+      if (cc.phase === 'VAN_TO_THANA_RELEASE') {
+        this.finalizeThanaRelease();
+        return;
+      }
+      this.finalizeEnterCentralJail();
+      return;
+    }
+
+    this.hudAccum += dt;
+    if (this.hudAccum >= 0.08) {
+      this.hudAccum = 0;
+      this.emitHudSnapshot();
+    }
+  }
+
   private updateDynamicInteriorLight(): void {
     if (!this.interiorLight) return;
     if (this.mode === 'COURTROOM' && this.courtroomStage) {
@@ -6709,6 +7251,17 @@ export class GameEngine {
       this.interiorLight.color.setHex(0xffedd5);
       this.interiorLight.intensity = 3.2;
       this.interiorLight.distance = 32;
+      return;
+    }
+    if (this.mode === 'CUSTODY') {
+      if (this.custodyCutscene?.phase === 'THANA_LOCKUP') {
+        this.interiorLight.position.set(-144, 5.2, 162);
+        this.interiorLight.color.setHex(0xe0f2fe);
+        this.interiorLight.intensity = 3.0;
+        this.interiorLight.distance = 28;
+      } else {
+        this.interiorLight.intensity = 0;
+      }
       return;
     }
     if (this.mode === 'JAIL') {
@@ -6771,11 +7324,13 @@ export class GameEngine {
     this.camera.position.lerp(this._camDesired, 1 - Math.exp(-5 * dt));
     this.camera.lookAt(this._camTarget);
 
-    // Auto-advance arguments smoothly if user watches without clicking
+    // Wait for current full sentence TTS to finish before stepping to the next courtroom speaker
     if (!cs.argumentsFinished) {
-      this.courtDialogueTimer += dt;
-      if (this.courtDialogueTimer >= 5.2) {
-        this.advanceCourtroomDialogue();
+      if (!soundEngine.isSpeaking()) {
+        this.courtDialogueTimer += dt;
+        if (this.courtDialogueTimer >= 1.15) {
+          this.advanceCourtroomDialogue();
+        }
       }
     }
   }
@@ -7095,8 +7650,12 @@ export class GameEngine {
       }
     }
     if (this.npcSubtitle) {
-      this.npcSubtitle.ttl -= dt;
-      if (this.npcSubtitle.ttl <= 0) this.npcSubtitle = null;
+      if (soundEngine.isSpeaking()) {
+        this.npcSubtitle.ttl = Math.max(this.npcSubtitle.ttl, 0.45);
+      } else {
+        this.npcSubtitle.ttl -= dt;
+        if (this.npcSubtitle.ttl <= 0) this.npcSubtitle = null;
+      }
     }
     if (this.activeChaiPrompt) {
       this.activeChaiPrompt.ttl -= dt;
@@ -7109,6 +7668,7 @@ export class GameEngine {
     }
 
     this.stepTrafficSignals(dt);
+    this.stepThanaAndCourtActors(dt, false);
 
     // Spin 3D display guns gently inside Armory
     for (const disp of this.shopDisplays) {
@@ -7896,7 +8456,224 @@ export class GameEngine {
     v.spawnedOfficerIds.push(officer.id);
     v.dismountCooldown = 0.65;
     if (v.spawnedOfficerIds.length === 1) {
-      soundEngine.speakPoliceLine('warn');
+      const spoken = soundEngine.speakPoliceLine('warn');
+      if (spoken) {
+        this.npcSubtitle = { speaker: officer.name, text: spoken.text, ttl: 3.6 };
+      }
+    }
+  }
+
+  private randomizeThanaPrisoners(force: boolean): void {
+    if (!this.jailRig) return;
+    const distToThana = Math.hypot(this.playerX - -150, this.playerZ - 163.5);
+    if (!force && distToThana < 34) return;
+    const count = Math.floor(Math.random() * 3); // 0, 1, or 2 NPC prisoners dynamically
+    this.thanaPrisonerActiveCount = count;
+    this.jailRig.thanaPrisoners.forEach((p, idx) => {
+      const show = idx < count;
+      p.active = show;
+      p.rig.root.visible = show;
+    });
+  }
+
+  private stepThanaAndCourtActors(dt: number, suppressAmbientSpeech: boolean): void {
+    const tNow = performance.now() * 0.004;
+
+    if (this.jailRig) {
+      const blink = Math.sin(tNow * 2.5) > 0;
+      this.jailRig.thanaRadioLedMat.color.setHex(blink ? 0x22c55e : 0xf59e0b);
+
+      this.thanaPrisonerShuffleTimer -= dt;
+      if (this.thanaPrisonerShuffleTimer <= 0) {
+        this.thanaPrisonerShuffleTimer = 42;
+        this.randomizeThanaPrisoners(false);
+      }
+
+      for (const a of this.jailRig.thanaActors) {
+        if (!a.active) {
+          a.rig.root.visible = false;
+          continue;
+        }
+        a.rig.root.visible = true;
+        if (a.waypoints && a.waypoints.length >= 2) {
+          const wp = a.waypoints[a.wpIndex];
+          const dx = wp.x - a.x;
+          const dz = wp.z - a.z;
+          const d = Math.hypot(dx, dz);
+          if (d < 0.35) {
+            a.wpIndex = (a.wpIndex + 1) % a.waypoints.length;
+          } else {
+            const spd = a.kind === 'prisoner' ? 1.15 : 1.75;
+            a.yaw = lerpAngle(a.yaw, Math.atan2(-dx, -dz), 1 - Math.exp(-6 * dt));
+            a.x += (dx / d) * spd * dt;
+            a.z += (dz / d) * spd * dt;
+            a.rig.root.position.set(a.x, 0.28, a.z);
+            a.rig.root.rotation.y = a.yaw;
+            const swing = Math.sin(tNow * 2.1 + a.seedId) * 0.42;
+            a.rig.leftLeg.rotation.x = swing;
+            a.rig.rightLeg.rotation.x = -swing;
+            a.rig.leftArm.rotation.x = -swing * 0.4;
+            a.rig.rightArm.rotation.x = a.kind === 'constable' ? 0.45 : swing * 0.4;
+          }
+        } else {
+          // Stationary Duty Officer, Complainant, or Lockup Questioning Constable
+          a.rig.leftLeg.rotation.x = 0;
+          a.rig.rightLeg.rotation.x = 0;
+          if (a === this.jailRig.thanaLockupConstable) {
+            a.rig.rightArm.rotation.x =
+              this.thanaPrisonerActiveCount > 0 ? 0.55 + Math.sin(tNow * 1.9) * 0.35 : 0.1;
+          } else {
+            a.rig.rightArm.rotation.x = Math.sin(tNow * 1.4 + a.seedId) * 0.22;
+          }
+        }
+      }
+
+      // Localized Police Thana SFX + Ambient Hindi Chatter
+      const distThana = Math.hypot(this.playerX - -150, this.playerZ - 163.5);
+      if (distThana < 26) {
+        this.thanaChatterCooldown -= dt;
+        if (this.thanaChatterCooldown <= 0) {
+          this.thanaChatterCooldown = 5.5 + Math.random() * 4.5;
+          if (Math.random() < 0.55) {
+            soundEngine.playPoliceRadioChatter();
+          } else {
+            soundEngine.playThanaPhoneRing();
+          }
+        }
+        if (!suppressAmbientSpeech && !this.npcSubtitle && !this.licenseRevokedPrompt?.active) {
+          this.thanaAmbientBubbleTimer -= dt;
+          if (this.thanaAmbientBubbleTimer <= 0) {
+            this.thanaAmbientBubbleTimer = 7.5 + Math.random() * 4;
+            const lines: { speaker: string; role: 'officer' | 'citizen'; seed: number; display: string; tts: string }[] = [
+              {
+                speaker: 'Hawaldaar Ramesh',
+                role: 'officer',
+                seed: 702,
+                display: 'Control Room Alpha-4, Thana Number 4 duty report clear — over!',
+                tts: 'कंट्रोल रूम अल्फा चार, थाना नंबर चार ड्यूटी रिपोर्ट क्लियर — ओवर!',
+              },
+              {
+                speaker: 'Fariyadi Suresh',
+                role: 'citizen',
+                seed: 705,
+                display: 'Sahab mera scooter bazaar se chori ho gaya, jaldi FIR likh lijiye!',
+                tts: 'साहब मेरा स्कूटर बाज़ार से चोरी हो गया, जल्दी एफआईआर लिख लीजिए!',
+              },
+              {
+                speaker: 'Duty Constable',
+                role: 'officer',
+                seed: 703,
+                display: 'Register number teen lao aur sabhi patrolling units ko alert rakho!',
+                tts: 'रजिस्टर नंबर तीन लाओ और सभी पेट्रोलिंग यूनिट्स को अलर्ट रखो!',
+              },
+            ];
+            if (this.thanaPrisonerActiveCount > 0) {
+              lines.push(
+                {
+                  speaker: 'Lockup Constable',
+                  role: 'officer',
+                  seed: 709,
+                  display: 'Chup-chaap lockup mein baith! Zyada halla kiya toh danda padega!',
+                  tts: 'चुप-चाप लॉकअप में बैठ! ज़्यादा हल्ला किया तो डंडा पड़ेगा!',
+                },
+                {
+                  speaker: 'Kaidi Bunty',
+                  role: 'citizen',
+                  seed: 710,
+                  display: 'Sahab ek cup chai pila do, subah se lockup mein hoon!',
+                  tts: 'साहब एक कप चाय पिला दो, सुबह से लॉकअप में हूँ!',
+                },
+              );
+            }
+            const pick = lines[Math.floor(Math.random() * lines.length)];
+            this.speakWithSubtitle(pick.speaker, pick.role, pick.seed, pick.display, pick.tts, 'low');
+          }
+        }
+      }
+    }
+
+    // Bustling District Court Complex Actors (Spectator Mode)
+    if (this.courtRig) {
+      for (const a of this.courtRig.actors) {
+        if (a.kind === 'vakil' && a.waypoints && a.waypoints.length >= 2) {
+          const wp = a.waypoints[a.wpIndex];
+          const dx = wp.x - a.x;
+          const dz = wp.z - a.z;
+          const d = Math.hypot(dx, dz);
+          if (d < 0.35) {
+            a.wpIndex = (a.wpIndex + 1) % a.waypoints.length;
+          } else {
+            const spd = 1.85;
+            a.yaw = lerpAngle(a.yaw, Math.atan2(-dx, -dz), 1 - Math.exp(-6 * dt));
+            a.x += (dx / d) * spd * dt;
+            a.z += (dz / d) * spd * dt;
+            a.rig.root.position.set(a.x, 0.24, a.z);
+            a.rig.root.rotation.y = a.yaw;
+            const swing = Math.sin(tNow * 2.0 + a.seedId) * 0.4;
+            a.rig.leftLeg.rotation.x = swing;
+            a.rig.rightLeg.rotation.x = -swing;
+            a.rig.leftArm.rotation.x = 0.72; // Carrying bundle of legal case papers
+            a.rig.rightArm.rotation.x = -swing * 0.3;
+          }
+        } else if (a.kind === 'clerk') {
+          // Clerks typing fast on files at Atrium desks
+          a.rig.leftArm.rotation.x = 0.85 + Math.sin(tNow * 4.5 + a.seedId) * 0.14;
+          a.rig.rightArm.rotation.x = 0.85 + Math.cos(tNow * 4.8 + a.seedId) * 0.14;
+        } else if (a.kind === 'judge') {
+          a.rig.rightArm.rotation.x = 0.3 + Math.sin(tNow * 1.1 + a.seedId) * 0.25;
+        } else if (a.kind === 'witness') {
+          a.rig.rightArm.rotation.x = Math.sin(tNow * 1.6 + a.seedId) * 0.18;
+        }
+      }
+
+      const distCourt = Math.hypot(
+        this.playerX - this.courtRig.atriumCenter.x,
+        this.playerZ - this.courtRig.atriumCenter.z,
+      );
+      if (!suppressAmbientSpeech && distCourt < 22 && !this.npcSubtitle) {
+        this.courtAmbientBubbleTimer -= dt;
+        if (this.courtAmbientBubbleTimer <= 0) {
+          this.courtAmbientBubbleTimer = 7.5 + Math.random() * 4;
+          const courtLines: {
+            speaker: string;
+            role: 'judge' | 'lawyer' | 'clerk' | 'citizen';
+            seed: number;
+            display: string;
+            tts: string;
+          }[] = [
+            {
+              speaker: 'Vakil Deshpande',
+              role: 'citizen',
+              seed: 851,
+              display: 'Tarikh par tarikh! Chaliye Court Room Number 2 mein file pesh karte hain.',
+              tts: 'तारीख पर तारीख! चलिए कोर्ट रूम नंबर दो में फाइल पेश करते हैं।',
+            },
+            {
+              speaker: 'Court Clerk',
+              role: 'clerk',
+              seed: 853,
+              display: 'Agle mukadme ki file number char sau do taiyaar hai sahab!',
+              tts: 'अगले मुकदमे की फाइल नंबर चार सौ दो तैयार है साहब!',
+            },
+            {
+              speaker: 'Judge (Hall 2)',
+              role: 'judge',
+              seed: 854,
+              display: 'Order order! Gawah ke bayan register mein darj kiye jaayein!',
+              tts: 'ऑर्डर ऑर्डर! गवाह के बयान रजिस्टर में दर्ज किए जाएँ!',
+            },
+            {
+              speaker: 'Adv. Priya Nair',
+              role: 'lawyer',
+              seed: 852,
+              display: 'Your Honour, zameeni vivad ke sabhi kagazaat court mein jama kar diye hain.',
+              tts: 'योर ऑनर, ज़मीनी विवाद के सभी कागज़ात कोर्ट में जमा कर दिए हैं।',
+            },
+          ];
+          const pick = courtLines[Math.floor(Math.random() * courtLines.length)];
+          this.speakWithSubtitle(pick.speaker, pick.role, pick.seed, pick.display, pick.tts, 'low');
+        }
+      }
     }
   }
 
@@ -8161,7 +8938,13 @@ export class GameEngine {
           npc.chaiCompanionTarget = null;
           this.playerHp = Math.min(this.playerMaxHp, this.playerHp + 5);
           soundEngine.playCashPickup();
-          this.speakWithSubtitle(npc.name, 'citizen', npc.id, 'Wah bhai! Kya kadak chai bani hai!');
+          this.speakWithSubtitle(
+            npc.name,
+            'citizen',
+            npc.id,
+            'Wah bhai! Kya kadak chai bani hai!',
+            'वाह भाई! क्या कड़क चाय बनी है!',
+          );
           this.callbacks.onToast({
             text: `${stall.name}: Garma-garam Chai (+5 HP)`,
             tone: 'cash',
@@ -8198,17 +8981,17 @@ export class GameEngine {
             const pair = npc.isPandit
               ? { display: 'Jai Shree Ram! Mandir mein darshan kijiye bhai.', tts: 'जय श्री राम! मंदिर में दर्शन कीजिए भाई।' }
               : { display: 'Jai Shree Ram!', tts: 'जय श्री राम!' };
-            this.speakWithSubtitle(npc.name, 'citizen', npc.id, pair.display, pair.tts);
+            this.speakWithSubtitle(npc.name, 'citizen', npc.id, pair.display, pair.tts, 'low');
           } else if (npc.landmarkKind === 'krishna_mandir') {
             const pair = npc.isPandit
-              ? { display: 'Radhe Radhe! Jai Shree Krishna! Aao aarti mein shaamil ho.', tts: 'राधे राधे! जय श्री कृष्ण!' }
+              ? { display: 'Radhe Radhe! Jai Shree Krishna! Aao aarti mein shaamil ho.', tts: 'राधे राधे! जय श्री कृष्ण! आओ आरती में शामिल हो।' }
               : { display: 'Radhe Radhe! Jai Shree Krishna!', tts: 'राधे राधे! जय श्री कृष्ण!' };
-            this.speakWithSubtitle(npc.name, 'citizen', npc.id, pair.display, pair.tts);
+            this.speakWithSubtitle(npc.name, 'citizen', npc.id, pair.display, pair.tts, 'low');
           } else {
             const pair = npc.isImam
               ? { display: 'Aslam walykum bhai! Sab khairiyat hai?', tts: 'अस्सलाम वालेकुम भाई! सब ख़ैरियत है?' }
               : { display: 'Aslam walykum bhai!', tts: 'अस्सलाम वालेकुम भाई!' };
-            this.speakWithSubtitle(npc.name, 'citizen', npc.id, pair.display, pair.tts);
+            this.speakWithSubtitle(npc.name, 'citizen', npc.id, pair.display, pair.tts, 'low');
           }
         }
         const hx = npc.homeX ?? npc.x;
@@ -8251,7 +9034,7 @@ export class GameEngine {
             { display: 'Chal chai piyega?', tts: 'चल चाय पियेगा?' },
           ];
           const chosen = greetings[Math.floor(Math.random() * greetings.length)];
-          this.speakWithSubtitle(npc.name, 'citizen', npc.id, chosen.display, chosen.tts);
+          this.speakWithSubtitle(npc.name, 'citizen', npc.id, chosen.display, chosen.tts, 'low');
           if (chosen.display === 'Chal chai piyega?') {
             this.activeChaiPrompt = {
               npcId: npc.id,
@@ -8734,6 +9517,10 @@ export class GameEngine {
 
     const distToLicense = Math.hypot(this.playerX - this.licenseOfficePos.x, this.playerZ - this.licenseOfficePos.z);
     const nearLicenseOffice = !this.currentVehicle && distToLicense < 16;
+    const distToThanaDesk = this.jailRig
+      ? Math.hypot(this.playerX - this.jailRig.thanaDeskPos.x, this.playerZ - this.jailRig.thanaDeskPos.z)
+      : 999;
+    const nearThanaDesk = !this.currentVehicle && distToThanaDesk < 4.5;
 
     const worldLabels: WorldLabelHud[] = [];
 
@@ -8868,6 +9655,10 @@ export class GameEngine {
         this.currentVehicle.kind === 'bike' && this.hasHelmet && !this.helmetOn
           ? 'Press F to exit bike · Press L to put on ISI Helmet (Challan Safety)'
           : 'Press F to exit vehicle';
+    } else if (nearThanaDesk) {
+      nearPrompt = this.hasGunLicense
+        ? 'Thana No. 4 Duty Desk · Press E to talk to Duty Officer'
+        : `Thana No. 4 Duty Desk · Press E for Urgent Arms License Renewal (${formatRs(URGENT_THANA_LICENSE_RENEWAL_INR)})`;
     } else if (nearDogAction === 'pet') {
       nearPrompt = 'Press E to Pet / Feed Street Dog (Saath chalega)';
     } else if (nearDogAction === 'sit') {
@@ -9086,6 +9877,7 @@ export class GameEngine {
       nearGunShop,
       nearBank,
       nearLicenseOffice,
+      nearThanaDesk,
       nearRescueVan,
       nearDogAction,
       nearStall,
@@ -9150,6 +9942,22 @@ export class GameEngine {
             dialogueTurns: [...this.courtroomState.dialogueTurns],
           }
         : null,
+      custodyCutscene: this.custodyCutscene
+        ? {
+            active: true,
+            phase: this.custodyCutscene.phase,
+            stepIndex: this.custodyCutscene.stepIndex,
+            title: this.custodyCutscene.title,
+            subtitle: this.custodyCutscene.subtitle,
+            stepLabel: this.custodyCutscene.stepLabel,
+            progressPct: clamp(
+              Math.round((this.custodyCutscene.timer / Math.max(0.1, this.custodyCutscene.duration)) * 100),
+              0,
+              100,
+            ),
+          }
+        : null,
+      licenseRevokedPrompt: this.licenseRevokedPrompt ? { ...this.licenseRevokedPrompt } : null,
       jail: jailHud,
     });
   }
@@ -9165,6 +9973,7 @@ export class GameEngine {
 
   public dispose(): void {
     this.disposed = true;
+    this.removePrisonerVan();
     this.releasePointerLock();
     this.stopMicRecognition();
     this.saveGameState();
