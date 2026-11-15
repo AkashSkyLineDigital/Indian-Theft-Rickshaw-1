@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 
 interface TouchControlsProps {
+  inJail?: boolean;
   inVehicle: boolean;
   canUseMedkit: boolean;
   micListening: boolean;
@@ -49,6 +50,7 @@ interface TouchControlsProps {
 }
 
 export const TouchControls: React.FC<TouchControlsProps> = ({
+  inJail = false,
   inVehicle,
   canUseMedkit,
   micListening,
@@ -270,26 +272,30 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
               <span className="text-[8px] font-bold">HELM</span>
             </button>
           )}
-          <button
-            type="button"
-            onClick={onToggleMic}
-            className={`w-11 h-11 rounded-full border flex items-center justify-center active:scale-95 ${
-              micListening
-                ? 'bg-red-600 border-red-300 text-white'
-                : 'bg-[#141A26]/90 border-emerald-500/70 text-emerald-300'
-            }`}
-            aria-label="Voice Mic"
-          >
-            <Mic className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            onClick={onOpenMap}
-            className="w-11 h-11 rounded-full bg-[#141A26]/90 border border-sky-500/70 flex items-center justify-center text-sky-300 active:scale-95"
-            aria-label="City Map"
-          >
-            <MapIcon className="w-4 h-4" />
-          </button>
+          {!inJail && (
+            <>
+              <button
+                type="button"
+                onClick={onToggleMic}
+                className={`w-11 h-11 rounded-full border flex items-center justify-center active:scale-95 ${
+                  micListening
+                    ? 'bg-red-600 border-red-300 text-white'
+                    : 'bg-[#141A26]/90 border-emerald-500/70 text-emerald-300'
+                }`}
+                aria-label="Voice Mic"
+              >
+                <Mic className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={onOpenMap}
+                className="w-11 h-11 rounded-full bg-[#141A26]/90 border border-sky-500/70 flex items-center justify-center text-sky-300 active:scale-95"
+                aria-label="City Map"
+              >
+                <MapIcon className="w-4 h-4" />
+              </button>
+            </>
+          )}
           <button
             type="button"
             onClick={onOpenSettings}
@@ -298,22 +304,26 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
           >
             <Settings className="w-4 h-4" />
           </button>
-          <button
-            type="button"
-            onClick={onOpenPhone}
-            className="w-11 h-11 rounded-full bg-[#141A26]/90 border border-slate-600 flex items-center justify-center text-sky-400 active:scale-95"
-            aria-label="Phone"
-          >
-            <Smartphone className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            onClick={onOpenWheel}
-            className="w-11 h-11 rounded-full bg-[#141A26]/90 border border-amber-500/70 flex items-center justify-center text-amber-400 active:scale-95"
-            aria-label="Weapon Wheel"
-          >
-            <Disc className="w-4 h-4" />
-          </button>
+          {!inJail && (
+            <>
+              <button
+                type="button"
+                onClick={onOpenPhone}
+                className="w-11 h-11 rounded-full bg-[#141A26]/90 border border-slate-600 flex items-center justify-center text-sky-400 active:scale-95"
+                aria-label="Phone"
+              >
+                <Smartphone className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={onOpenWheel}
+                className="w-11 h-11 rounded-full bg-[#141A26]/90 border border-amber-500/70 flex items-center justify-center text-amber-400 active:scale-95"
+                aria-label="Weapon Wheel"
+              >
+                <Disc className="w-4 h-4" />
+              </button>
+            </>
+          )}
         </div>
 
         <div className="flex items-center gap-2.5">
@@ -338,21 +348,23 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
               <span className="text-[9px] font-bold">JUMP</span>
             </button>
           )}
-          <button
-            type="button"
-            onClick={onEnterExit}
-            className="w-13 h-13 rounded-full bg-[#141A26]/90 border border-sky-500/70 flex flex-col items-center justify-center text-sky-300 active:scale-95"
-          >
-            <Car className="w-4 h-4" />
-            <span className="text-[9px] font-bold">{inVehicle ? 'EXIT' : 'CAR'}</span>
-          </button>
+          {!inJail && (
+            <button
+              type="button"
+              onClick={onEnterExit}
+              className="w-13 h-13 rounded-full bg-[#141A26]/90 border border-sky-500/70 flex flex-col items-center justify-center text-sky-300 active:scale-95"
+            >
+              <Car className="w-4 h-4" />
+              <span className="text-[9px] font-bold">{inVehicle ? 'EXIT' : 'CAR'}</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={onAttack}
             className="w-16 h-16 rounded-full bg-red-600/90 border-2 border-red-400 flex flex-col items-center justify-center text-white shadow-xl active:scale-95"
           >
             <Crosshair className="w-5 h-5" />
-            <span className="text-[10px] font-bold">FIRE</span>
+            <span className="text-[10px] font-bold">{inJail ? 'PUNCH' : 'FIRE'}</span>
           </button>
         </div>
       </div>

@@ -31,6 +31,7 @@ interface BankModalProps {
   bank: BankAccountHudState;
   timeOfDay: TimeOfDayHud;
   missionActive: boolean;
+  probationDaysLeft?: number;
   onTransaction: (
     account: 'SAVINGS' | 'FD',
     action: 'DEPOSIT' | 'WITHDRAW',
@@ -50,6 +51,7 @@ export const BankModal: React.FC<BankModalProps> = ({
   bank,
   timeOfDay,
   missionActive,
+  probationDaysLeft = 0,
   onTransaction,
   onStartMission,
   onClose,
@@ -177,6 +179,13 @@ export const BankModal: React.FC<BankModalProps> = ({
         <div className="p-5 flex flex-col gap-4 overflow-y-auto">
           {tab === 'accounts' && (
             <>
+              {probationDaysLeft > 0 && (
+                <div className="px-3.5 py-2.5 bg-orange-950/75 border border-orange-500/70 text-xs font-mono-num text-orange-100">
+                  COURT PROBATION ORDER: Royal Bank Savings &amp; FD interest is frozen for{' '}
+                  <strong>{probationDaysLeft}</strong> remaining day(s). Principal deposits &amp;
+                  withdrawals remain open.
+                </div>
+              )}
               {/* Account Summary Strip */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="p-3 bg-[#0B0E14] border border-cyan-500/40">

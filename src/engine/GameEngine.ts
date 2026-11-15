@@ -31,6 +31,8 @@ import {
   JAIL_WARDEN_BRIBE_LOW_INR,
   JAIL_WORK_WAGE_INR,
   JailHudState,
+  JailRivalInfo,
+  JailSchedulePhase,
   LAWYER_FEE_1_2_INR,
   LAWYER_FEE_3_INR,
   LicenseRevokedPromptHud,
@@ -44,13 +46,17 @@ import {
   MissionPhase,
   NO_DL_FINE_INR,
   NO_HELMET_FINE_INR,
+  PLAYER_OUTFITS,
   PassbookEntry,
+  PlayerOutfitId,
   PoliceInspectionHud,
   PrayerAnimHud,
   SAVINGS_ANNUAL_RATE,
   SavedGameState,
   STARTING_CASH_INR,
   STREET_BRIBE_INR,
+  SleepCutsceneHud,
+  SleepCutsceneLocation,
   StreetStallHudInfo,
   StreetStallMenuItem,
   TimeOfDayHud,
@@ -73,6 +79,7 @@ import { soundEngine } from './audio';
 import {
   AtmInfo,
   BuildingCollider,
+  BuildingSignInfo,
   CentralJailRig,
   ChaiStallInfo,
   CircleCollider,
@@ -81,6 +88,7 @@ import {
   DogRig,
   HelicopterRig,
   HumanoidRig,
+  IndianFamilyHouseRig,
   InteriorLightSpot,
   RescueVanRig,
   SacredLandmarkInfo,
@@ -255,6 +263,7 @@ export interface EngineCallbacks {
   onOpenStall?: (stall: StreetStallHudInfo) => void;
   onOpenAtm?: (atm: AtmLandmarkHud) => void;
   onOpenLicenseOffice?: () => void;
+  onOpenWardrobe?: () => void;
   onToggleMap: () => void;
   onOpenShopShortcut?: () => void;
 }
@@ -413,6 +422,8 @@ export class GameEngine {
   private interiorLight!: THREE.PointLight;
   private jailRig: CentralJailRig | null = null;
   private courtRig: CourtComplexRig | null = null;
+  private homeRig: IndianFamilyHouseRig | null = null;
+  private buildingSigns: BuildingSignInfo[] = [];
   private courtroomStage: CourtroomStageRig | null = null;
   private prisonerVan: VehicleRig | null = null;
   private custodyCutscene: {
@@ -456,6 +467,7 @@ export class GameEngine {
   private policeVehiclesDestroyed = 0;
   private crimeUnlicensedWeapon = false;
   private crimeTrafficViolations = 0;
+  private crimeRecklessDriving = false;
   private crimeVehicleTheftCount = 0;
   private crimeStolePoliceCar = false;
   private crimeCivilianAssaults = 0;
@@ -488,9 +500,23 @@ export class GameEngine {
   // Day-Noon-Midnight Time Cycle & Localized Sacred Schedule
   private gameMinutes = 480; // 08:00 AM Morning
   private dayCount = 1;
+  private probationDaysLeft = 0;
   private readonly timeSpeedMinPerSec = 16; // 90s full 24h cycle
   private lastAartiSlot = -1;
   private lastAzaanSlot = -1;
+  private sleepCutscene: {
+    location: SleepCutsceneLocation;
+    returnMode: 'PLAYING' | 'JAIL';
+    timer: number;
+    duration: number;
+    startMinutes: number;
+    targetMinutes: number;
+    daySettled: boolean;
+    interestGain: number;
+    remainingAfterWake: number;
+    title: string;
+    subtitle: string;
+  } | null = null;
 
   // Fictional Banking & Pro-Rated Daily Interest Economy
   private savingsPrincipal = 0;
@@ -519,12 +545,21 @@ export class GameEngine {
     duration: number;
   } | null = null;
 
+  // Personal Indian Family House, Custom Nameplate & Wardrobe
+  private hasSavedGame = false;
+  private houseName: string | null = null;
+  private playerOutfit: PlayerOutfitId = 'default';
+  private wardrobeWeapons: Set<WeaponId> = new Set();
+  private wardrobeArmor = 0;
+  private wardrobeMedkits = 0;
+  private pujaCooldown = 0;
+
   // Player state (yaw = 0 faces North -Z)
   private playerRig!: HumanoidRig;
-  private playerX = 0;
+  private playerX = 30;
   private playerY = 0;
   private playerVy = 0;
-  private playerZ = 8;
+  private playerZ = 110.6;
   private playerYaw = 0;
   private camYaw = 0;
   private camPitch = 0.34;
@@ -609,6 +644,7 @@ export class GameEngine {
   private pointerLocked = false;
   private pointerLockBlocked = false;
   private pointerLockProbeId: number | null = null;
+  private resizeObserver: ResizeObserver | null = null;
 
   // Entities
   private nextEntityId = 1;
@@ -647,9 +683,16 @@ export class GameEngine {
     taskStartX: number;
     taskStartZ: number;
     spottedByGuard: boolean;
-    nearStation: 'BUNK' | 'WORKSHOP' | 'WARDEN' | 'ESCAPE_GATE' | null;
     statusBanner: string | null;
     spotCooldown: number;
+    lastSchedulePhase: JailSchedulePhase;
+    workShiftDoneToday: boolean;
+    workSkipWarnTimer: number;
+    distractionTimer: number;
+    distractionCooldown: number;
+    toiletCooldown: number;
+    nearInmateDialogue: { name: string; text: string } | null;
+    nearStation: 'BUNK' | 'TOILET' | 'WORKSHOP' | 'WARDEN' | 'ESCAPE_GATE' | 'INMATE_ALLY' | 'INMATE_RIVAL' | null;
   } | null = null;
   private jailEscrowedWeapons: WeaponId[] = [];
   private jailEscrowedAmmo: Partial<Record<WeaponId, number>> = {};
@@ -679,7 +722,24 @@ export class GameEngine {
     try {
       const raw = localStorage.getItem(SAVE_STORAGE_KEY);
       if (!raw) return;
+      this.hasSavedGame = true;
       const saved = JSON.parse(raw) as Partial<SavedGameState>;
+      if (typeof saved.houseName === 'string' && saved.houseName.trim().length > 0) {
+        this.houseName = saved.houseName.trim().slice(0, 28);
+      }
+      if (saved.playerOutfit && saved.playerOutfit in PLAYER_OUTFITS) {
+        this.playerOutfit = saved.playerOutfit;
+      }
+      if (Array.isArray(saved.wardrobeWeapons)) {
+        const validW = saved.wardrobeWeapons.filter((w): w is WeaponId => w !== 'fists' && WEAPON_ORDER.includes(w));
+        this.wardrobeWeapons = new Set(validW);
+      }
+      if (typeof saved.wardrobeArmor === 'number' && Number.isFinite(saved.wardrobeArmor)) {
+        this.wardrobeArmor = clamp(Math.floor(saved.wardrobeArmor), 0, 100);
+      }
+      if (typeof saved.wardrobeMedkits === 'number' && Number.isFinite(saved.wardrobeMedkits)) {
+        this.wardrobeMedkits = clamp(Math.floor(saved.wardrobeMedkits), 0, MAX_MEDKITS);
+      }
       if (typeof saved.cash === 'number' && Number.isFinite(saved.cash)) {
         // Migrate legacy USD save balances (~85 INR per USD) while allowing negative debt
         this.playerCash =
@@ -743,6 +803,9 @@ export class GameEngine {
       if (typeof saved.dayCount === 'number' && Number.isFinite(saved.dayCount)) {
         this.dayCount = Math.max(1, Math.floor(saved.dayCount));
       }
+      if (typeof saved.probationDaysLeft === 'number' && Number.isFinite(saved.probationDaysLeft)) {
+        this.probationDaysLeft = Math.max(0, Math.floor(saved.probationDaysLeft));
+      }
       if (saved.bank && typeof saved.bank === 'object') {
         if (typeof saved.bank.savingsPrincipal === 'number' && Number.isFinite(saved.bank.savingsPrincipal)) {
           this.savingsPrincipal = Math.max(0, saved.bank.savingsPrincipal);
@@ -800,8 +863,14 @@ export class GameEngine {
         hasDrivingLicense: this.hasDrivingLicense,
         hasHelmet: this.hasHelmet,
         helmetOn: this.helmetOn,
+        houseName: this.houseName ?? undefined,
+        playerOutfit: this.playerOutfit,
+        wardrobeWeapons: Array.from(this.wardrobeWeapons),
+        wardrobeArmor: this.wardrobeArmor,
+        wardrobeMedkits: this.wardrobeMedkits,
         gameMinutes: Math.round(this.gameMinutes),
         dayCount: this.dayCount,
+        probationDaysLeft: this.probationDaysLeft,
         bank: {
           savingsPrincipal: this.savingsPrincipal,
           savingsInterest: this.savingsInterest,
@@ -858,6 +927,7 @@ export class GameEngine {
     this.renderer.domElement.style.display = 'block';
     this.renderer.domElement.style.width = '100%';
     this.renderer.domElement.style.height = '100%';
+    this.renderer.domElement.style.touchAction = 'none';
     this.container.appendChild(this.renderer.domElement);
 
     this.renderer.domElement.addEventListener('webglcontextlost', (e) => {
@@ -932,7 +1002,19 @@ export class GameEngine {
     this.nightEmissiveMats = env.nightEmissiveMats;
     this.interiorLightSpots = env.interiorLightSpots;
     this.jailRig = env.jailRig;
+    if (this.jailRig) {
+      this.disabledColliders.add(this.jailRig.cellGateCollider);
+    }
     this.courtRig = env.courtRig;
+    this.homeRig = env.homeRig;
+    this.buildingSigns = env.buildingSigns;
+    if (this.homeRig) {
+      this.homeRig.updateNameplate(this.houseName ?? 'Apna Ghar');
+    }
+    if (this.houseName) {
+      const homeSign = this.buildingSigns.find((s) => s.id === 'sign-home');
+      if (homeSign) homeSign.title = this.houseName;
+    }
     this.courtroomStage = createDistrictCourtroomStage(this.scene);
     this.randomizeThanaPrisoners(true);
     this.shopInteractMeshes = [
@@ -978,8 +1060,17 @@ export class GameEngine {
       skinColor: 0xc68b67,
       isPlayer: true,
     });
+    this.applyPlayerOutfit(this.playerOutfit);
+    if (!this.hasSavedGame && this.homeRig) {
+      this.playerX = this.homeRig.spawnPos.x;
+      this.playerY = 0;
+      this.playerZ = this.homeRig.spawnPos.z;
+      this.playerYaw = 0;
+      this.camYaw = 0;
+    }
     this.playerRig.helmetMesh.visible = this.hasHelmet && this.helmetOn;
-    this.playerRig.root.position.set(this.playerX, 0, this.playerZ);
+    this.playerRig.root.position.set(this.playerX, this.playerY, this.playerZ);
+    this.playerRig.root.rotation.y = this.playerYaw;
     this.scene.add(this.playerRig.root);
     this.refreshPlayerWeaponMesh();
 
@@ -1705,6 +1796,10 @@ export class GameEngine {
 
   private bindEvents(): void {
     window.addEventListener('resize', this.handleResize);
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => this.handleResize());
+      this.resizeObserver.observe(this.container);
+    }
     window.addEventListener('keydown', this.handleKeyDown);
     window.addEventListener('keyup', this.handleKeyUp);
     window.addEventListener('mousemove', this.handleMouseMove);
@@ -1721,6 +1816,9 @@ export class GameEngine {
     this.pointerLocked = document.pointerLockElement === this.renderer.domElement;
     if (this.pointerLocked) {
       this.pointerLockBlocked = false;
+    } else {
+      this.keys.clear();
+      this.mouseDownLeft = false;
     }
     if (this.pointerLockProbeId !== null) {
       window.clearTimeout(this.pointerLockProbeId);
@@ -1739,7 +1837,14 @@ export class GameEngine {
   };
 
   private requestCanvasPointerLock(): void {
-    if (this.mode !== 'PLAYING' || this.weaponWheelOpen) return;
+    if (
+      (this.mode !== 'PLAYING' && this.mode !== 'JAIL') ||
+      this.weaponWheelOpen ||
+      this.houseName === null ||
+      this.licenseRevokedPrompt?.active
+    ) {
+      return;
+    }
     if (document.pointerLockElement === this.renderer.domElement) return;
     if (this.pointerLockProbeId !== null) {
       window.clearTimeout(this.pointerLockProbeId);
@@ -1754,7 +1859,10 @@ export class GameEngine {
       }
       this.pointerLockProbeId = window.setTimeout(() => {
         this.pointerLockProbeId = null;
-        if (this.mode === 'PLAYING' && document.pointerLockElement !== this.renderer.domElement) {
+        if (
+          (this.mode === 'PLAYING' || this.mode === 'JAIL') &&
+          document.pointerLockElement !== this.renderer.domElement
+        ) {
           this.pointerLockBlocked = true;
         }
       }, 280);
@@ -1793,8 +1901,8 @@ export class GameEngine {
 
   private handleResize = (): void => {
     if (this.disposed) return;
-    const w = this.container.clientWidth || window.innerWidth;
-    const h = this.container.clientHeight || window.innerHeight;
+    const w = Math.max(1, this.container.clientWidth || window.innerWidth);
+    const h = Math.max(1, this.container.clientHeight || window.innerHeight);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
@@ -1825,6 +1933,14 @@ export class GameEngine {
       return;
     }
 
+    if (this.mode === 'SLEEP') {
+      if (code === 'Space' || code === 'Enter') {
+        e.preventDefault();
+        this.skipSleepCutscene();
+      }
+      return;
+    }
+
     if (this.mode === 'COURTROOM') {
       if (code === 'Space' || code === 'Enter') {
         e.preventDefault();
@@ -1841,7 +1957,7 @@ export class GameEngine {
       } else if (code === 'KeyC') {
         this.toggleFirstPerson();
       } else if (code === 'Digit1') {
-        this.jailSkipSentence();
+        this.jailSleepNight();
       } else if (code === 'Digit2') {
         this.jailPerformWork();
       } else if (code === 'Digit3') {
@@ -1860,6 +1976,12 @@ export class GameEngine {
         }
       } else if (code === 'Digit4') {
         this.jailStartPrisonBreak();
+      } else if (code === 'Digit5') {
+        this.jailTriggerInmateDistraction();
+      } else if (code === 'Digit6' || code === 'KeyB') {
+        this.jailBribeRival();
+      } else if (code === 'KeyJ' || code === 'Enter') {
+        this.tryPlayerAttack();
       } else if (code === 'Space') {
         e.preventDefault();
         this.triggerJump();
@@ -1867,7 +1989,7 @@ export class GameEngine {
       return;
     }
 
-    if (this.mode !== 'PLAYING' || this.licenseRevokedPrompt?.active) return;
+    if (this.mode !== 'PLAYING' || this.licenseRevokedPrompt?.active || this.houseName === null) return;
 
     this.keys.add(code);
     soundEngine.unlock();
@@ -2131,17 +2253,13 @@ export class GameEngine {
   }
 
   private handleMouseDown = (e: MouseEvent): void => {
-    if (this.mode === 'JAIL') {
-      soundEngine.unlock();
-      this.lastMouseX = e.clientX;
-      this.lastMouseY = e.clientY;
-      this.hasMousePos = true;
-      if (e.button === 0) {
-        this.mouseDownLeft = true;
-      }
+    if (
+      (this.mode !== 'PLAYING' && this.mode !== 'JAIL') ||
+      this.licenseRevokedPrompt?.active ||
+      this.houseName === null
+    ) {
       return;
     }
-    if (this.mode !== 'PLAYING' || this.licenseRevokedPrompt?.active) return;
     if (this.weaponWheelOpen) {
       if (e.button === 0) {
         this.setWeaponWheelOpen(false);
@@ -2154,12 +2272,12 @@ export class GameEngine {
     this.hasMousePos = true;
 
     // Right-click or Left-click on Gun Shopkeeper NPC, 3D Display Gun, Bank, or Street Stall
-    if (e.button === 2 || e.button === 0) {
+    if (this.mode === 'PLAYING' && (e.button === 2 || e.button === 0)) {
       const handledShop = this.tryRaycastShopClick(e.clientX, e.clientY, e.button === 2);
       if (handledShop) return;
     }
 
-    if (e.button === 2 && !this.currentVehicle && this.activeWeapon !== 'fists') {
+    if (this.mode === 'PLAYING' && e.button === 2 && !this.currentVehicle && this.activeWeapon !== 'fists') {
       this.toggleAds();
       return;
     }
@@ -2186,10 +2304,11 @@ export class GameEngine {
   };
 
   private handleMouseMove = (e: MouseEvent): void => {
-    if ((this.mode !== 'PLAYING' && this.mode !== 'JAIL') || this.weaponWheelOpen) return;
-    if (this.mode === 'JAIL' && document.pointerLockElement !== this.renderer.domElement && !this.mouseDownLeft) {
-      this.lastMouseX = e.clientX;
-      this.lastMouseY = e.clientY;
+    if (
+      (this.mode !== 'PLAYING' && this.mode !== 'JAIL') ||
+      this.weaponWheelOpen ||
+      this.houseName === null
+    ) {
       return;
     }
 
@@ -2235,7 +2354,7 @@ export class GameEngine {
   }
 
   public addCameraDelta(dx: number, dy: number): void {
-    if (this.mode !== 'PLAYING') return;
+    if (this.mode !== 'PLAYING' && this.mode !== 'JAIL') return;
     const adsScale = this.adsActive ? 0.55 : 1.0;
     const sens = 0.0055 * this.settings.mouseSensitivity * adsScale;
     this.camYaw = normalizeAngle(this.camYaw - dx * sens);
@@ -2245,7 +2364,7 @@ export class GameEngine {
   }
 
   public toggleFirstPerson(): void {
-    if (this.mode !== 'PLAYING') return;
+    if (this.mode !== 'PLAYING' && this.mode !== 'JAIL') return;
     this.firstPerson = !this.firstPerson;
     this.camPitch = this.firstPerson ? clamp(this.camPitch - 0.28, -0.45, 0.45) : clamp(this.camPitch + 0.25, 0.16, 0.85);
     this.playerRig.root.visible = !this.currentVehicle && !this.firstPerson;
@@ -2280,7 +2399,10 @@ export class GameEngine {
   }
 
   public triggerJump(): void {
-    if ((this.mode !== 'PLAYING' && this.mode !== 'JAIL') || this.currentVehicle || this.playerY > 0.02) return;
+    const groundY = this.mode === 'JAIL' ? 0.24 : 0;
+    if ((this.mode !== 'PLAYING' && this.mode !== 'JAIL') || this.currentVehicle || this.playerY > groundY + 0.05) {
+      return;
+    }
     soundEngine.unlock();
     this.playerVy = 8.4;
     soundEngine.playJump();
@@ -2388,6 +2510,12 @@ export class GameEngine {
   private syncBankInterest(settleFraction = false): void {
     const nowDays = this.getTotalGameDays();
     if (nowDays <= this.lastCompoundDay) return;
+
+    // Probation freeze: advance compound marker without paying Savings or FD interest
+    if (this.probationDaysLeft > 0) {
+      this.lastCompoundDay = nowDays;
+      return;
+    }
 
     let elapsed = nowDays - this.lastCompoundDay;
 
@@ -2585,7 +2713,7 @@ export class GameEngine {
 
   private getBankHudState(): BankAccountHudState {
     const nowDays = this.getTotalGameDays();
-    const pendingFrac = Math.max(0, nowDays - this.lastCompoundDay);
+    const pendingFrac = this.probationDaysLeft > 0 ? 0 : Math.max(0, nowDays - this.lastCompoundDay);
 
     const savBase = this.savingsPrincipal + this.savingsInterest;
     const savPending = savBase * (SAVINGS_ANNUAL_RATE / DAYS_PER_YEAR) * pendingFrac;
@@ -2785,9 +2913,15 @@ export class GameEngine {
     if (this.mode === 'JAIL' && this.jailState) {
       soundEngine.unlock();
       if (this.jailState.nearStation === 'BUNK') {
-        this.jailSkipSentence();
+        this.jailSleepNight();
+      } else if (this.jailState.nearStation === 'TOILET') {
+        this.jailUseToilet();
       } else if (this.jailState.nearStation === 'WORKSHOP') {
         this.jailPerformWork();
+      } else if (this.jailState.nearStation === 'INMATE_ALLY') {
+        this.jailTriggerInmateDistraction();
+      } else if (this.jailState.nearStation === 'INMATE_RIVAL') {
+        this.jailBribeRival();
       } else if (this.jailState.nearStation === 'ESCAPE_GATE') {
         this.jailStartPrisonBreak();
       } else if (this.jailState.nearStation === 'WARDEN') {
@@ -2800,7 +2934,7 @@ export class GameEngine {
           this.jailBribeWarden('bank');
         } else {
           this.callbacks.onToast({
-            text: `Warden ko ${formatRs(cost)} chahiye (Cash: ${formatRs(this.playerCash)} · Bank: ${formatRsExact(savTotal)}). Workshop se kamaao ya Bunk se Saza skip karo!`,
+            text: `Warden ko ${formatRs(cost)} chahiye (Cash: ${formatRs(this.playerCash)} · Bank: ${formatRsExact(savTotal)}). Workshop se kamaao ya Bunk se So kar din badhao!`,
             tone: 'warn',
           });
         }
@@ -3023,6 +3157,25 @@ export class GameEngine {
       }
     }
 
+    // Personal Indian Family House Interior Stations (Puja Corner, Bedroom, Wardrobe)
+    if (!this.currentVehicle && this.homeRig) {
+      if (Math.hypot(this.playerX - this.homeRig.pujaPos.x, this.playerZ - this.homeRig.pujaPos.z) < 3.2) {
+        this.prayAtHomePuja();
+        return;
+      }
+      if (Math.hypot(this.playerX - this.homeRig.bedPos.x, this.playerZ - this.homeRig.bedPos.z) < 3.4) {
+        this.sleepAtHomeBed();
+        return;
+      }
+      if (Math.hypot(this.playerX - this.homeRig.wardrobePos.x, this.playerZ - this.homeRig.wardrobePos.z) < 3.4) {
+        soundEngine.playUiClick();
+        this.adsActive = false;
+        this.releasePointerLock();
+        this.callbacks.onOpenWardrobe?.();
+        return;
+      }
+    }
+
     const distBank = Math.hypot(this.playerX - this.bankPos.x, this.playerZ - (this.bankPos.z - 8));
     if (!this.currentVehicle && distBank < 18) {
       soundEngine.playUiClick();
@@ -3038,6 +3191,158 @@ export class GameEngine {
       this.releasePointerLock();
       this.callbacks.onBankPrompt(false);
     }
+  }
+
+  public setHouseName(name: string): void {
+    const clean = (name || 'Apna Ghar').trim().slice(0, 28) || 'Apna Ghar';
+    this.houseName = clean;
+    this.hasSavedGame = true;
+    this.homeRig?.updateNameplate(clean);
+    const homeSign = this.buildingSigns.find((s) => s.id === 'sign-home');
+    if (homeSign) {
+      homeSign.title = clean;
+    }
+    soundEngine.playCashPickup();
+    this.callbacks.onToast({
+      text: `Grah Pravesh Mubarak! Aapka ghar "${clean}" GPS Map par save ho gaya.`,
+      tone: 'cash',
+    });
+    this.saveGameState();
+    this.emitHudSnapshot();
+  }
+
+  private applyPlayerOutfit(outfit: PlayerOutfitId): void {
+    if (!this.playerRig) return;
+    const spec = PLAYER_OUTFITS[outfit] ?? PLAYER_OUTFITS.default;
+    if (this.playerRig.shirtMat) {
+      this.playerRig.shirtMat.color.setHex(spec.shirtHex);
+    }
+    if (this.playerRig.pantsMat) {
+      this.playerRig.pantsMat.color.setHex(spec.pantsHex);
+    }
+    const isKurta = outfit === 'kurta';
+    if (this.playerRig.kurtaHem) this.playerRig.kurtaHem.visible = isKurta;
+    if (this.playerRig.kurtaPlacket) this.playerRig.kurtaPlacket.visible = isKurta;
+    if (this.playerRig.beltMesh) this.playerRig.beltMesh.visible = !isKurta;
+  }
+
+  public setPlayerOutfit(outfit: PlayerOutfitId): void {
+    if (!(outfit in PLAYER_OUTFITS)) return;
+    this.playerOutfit = outfit;
+    this.applyPlayerOutfit(outfit);
+    soundEngine.playUiClick();
+    this.callbacks.onToast({
+      text: `Outfit Changed: ${PLAYER_OUTFITS[outfit].label}`,
+      tone: 'info',
+    });
+    this.saveGameState();
+    this.emitHudSnapshot();
+  }
+
+  public storeWardrobeWeapon(weaponId: WeaponId): boolean {
+    if (weaponId === 'fists' || !this.ownedWeapons.has(weaponId)) return false;
+    this.ownedWeapons.delete(weaponId);
+    this.wardrobeWeapons.add(weaponId);
+    if (this.activeWeapon === weaponId) {
+      this.activeWeapon = 'fists';
+      this.adsActive = false;
+      this.refreshPlayerWeaponMesh();
+    }
+    soundEngine.playUiClick();
+    this.callbacks.onToast({ text: `${WEAPONS[weaponId].shortName} Wardrobe mein store kiya`, tone: 'info' });
+    this.saveGameState();
+    this.emitHudSnapshot();
+    return true;
+  }
+
+  public retrieveWardrobeWeapon(weaponId: WeaponId): boolean {
+    if (weaponId === 'fists' || !this.wardrobeWeapons.has(weaponId)) return false;
+    this.wardrobeWeapons.delete(weaponId);
+    this.ownedWeapons.add(weaponId);
+    soundEngine.playUiClick();
+    this.callbacks.onToast({ text: `${WEAPONS[weaponId].shortName} Wardrobe se nikala`, tone: 'info' });
+    this.saveGameState();
+    this.emitHudSnapshot();
+    return true;
+  }
+
+  public storeWardrobeArmor(): boolean {
+    if (this.playerArmor <= 0) return false;
+    const room = 100 - this.wardrobeArmor;
+    if (room <= 0) return false;
+    const move = Math.min(room, Math.floor(this.playerArmor));
+    if (move <= 0) return false;
+    this.playerArmor -= move;
+    this.wardrobeArmor += move;
+    soundEngine.playUiClick();
+    this.callbacks.onToast({ text: `+${move} Armor Locker mein rakha`, tone: 'info' });
+    this.saveGameState();
+    this.emitHudSnapshot();
+    return true;
+  }
+
+  public retrieveWardrobeArmor(): boolean {
+    if (this.wardrobeArmor <= 0) return false;
+    const room = 100 - Math.floor(this.playerArmor);
+    if (room <= 0) return false;
+    const move = Math.min(room, this.wardrobeArmor);
+    this.wardrobeArmor -= move;
+    this.playerArmor += move;
+    soundEngine.playUiClick();
+    this.callbacks.onToast({ text: `+${move} Armor pehen liya`, tone: 'info' });
+    this.saveGameState();
+    this.emitHudSnapshot();
+    return true;
+  }
+
+  public storeWardrobeMedkit(): boolean {
+    if (this.playerMedkits <= 0 || this.wardrobeMedkits >= MAX_MEDKITS) return false;
+    this.playerMedkits -= 1;
+    this.wardrobeMedkits += 1;
+    soundEngine.playUiClick();
+    this.callbacks.onToast({ text: '1 Medkit Wardrobe mein store kiya', tone: 'info' });
+    this.saveGameState();
+    this.emitHudSnapshot();
+    return true;
+  }
+
+  public retrieveWardrobeMedkit(): boolean {
+    if (this.wardrobeMedkits <= 0 || this.playerMedkits >= MAX_MEDKITS) return false;
+    this.wardrobeMedkits -= 1;
+    this.playerMedkits += 1;
+    soundEngine.playUiClick();
+    this.callbacks.onToast({ text: '1 Medkit Wardrobe se liya', tone: 'info' });
+    this.saveGameState();
+    this.emitHudSnapshot();
+    return true;
+  }
+
+  public prayAtHomePuja(): void {
+    if (this.pujaCooldown > 0) {
+      this.callbacks.onToast({ text: 'Puja aashirwad abhi taaza hai — kuch der baad phir karein.', tone: 'info' });
+      return;
+    }
+    this.pujaCooldown = 12;
+    this.blessedTimer = this.blessedTotalSec;
+    this.playerHp = Math.min(this.playerMaxHp, this.playerHp + 20);
+    this.playerStamina = Math.min(this.playerMaxStamina, this.playerStamina + 35);
+    soundEngine.playTempleBell();
+    this.prayerAnim = {
+      kind: 'ram_mandir',
+      placeName: `${this.houseName ?? 'Apna Ghar'} · Puja Corner`,
+      title: 'Ghar Aarti & Puja',
+      subtitle: 'Shubh aashirwad! (+20 HP, Full Blessed Regen)',
+      remaining: 3.0,
+      duration: 3.0,
+    };
+    this.callbacks.onToast({ text: 'Home Puja Complete · Blessed (+HP & Stamina Regen)', tone: 'cash' });
+    this.saveGameState();
+    this.emitHudSnapshot();
+  }
+
+  public sleepAtHomeBed(): void {
+    if (this.mode !== 'PLAYING' || this.sleepCutscene) return;
+    this.startSleepCutscene('HOME_BED');
   }
 
   public bribePolice(): boolean {
@@ -3156,7 +3461,7 @@ export class GameEngine {
     this.touchMoveY = 0;
     this.surrenderHolding = false;
     this.surrenderHoldTimer = 0;
-    if (next !== 'PLAYING') {
+    if (next !== 'PLAYING' && next !== 'JAIL') {
       this.adsActive = false;
       this.releasePointerLock();
     }
@@ -3165,14 +3470,19 @@ export class GameEngine {
       this.callbacks.onWeaponWheelChange(false);
     }
     soundEngine.setPaused(
-      next !== 'PLAYING' && next !== 'JAIL' && next !== 'COURTROOM' && next !== 'CUSTODY',
+      next !== 'PLAYING' &&
+        next !== 'JAIL' &&
+        next !== 'COURTROOM' &&
+        next !== 'CUSTODY' &&
+        next !== 'SLEEP',
     );
     if (
       next === 'PAUSED' ||
       next === 'WASTED' ||
       next === 'BUSTED' ||
       next === 'COURTROOM' ||
-      next === 'CUSTODY'
+      next === 'CUSTODY' ||
+      next === 'SLEEP'
     ) {
       soundEngine.setSirenActive(false);
       soundEngine.setChopperActive(false);
@@ -3468,28 +3778,53 @@ export class GameEngine {
     }
 
     const hadSwatOrArmyKills = this.swatKilledCount > 0 || this.commandoKilledCount > 0;
+    const totalFatalities =
+      this.civilianKillsInSpree +
+      this.policeKilledCount +
+      this.swatKilledCount +
+      this.commandoKilledCount;
+    const hasFatalCharge = totalFatalities > 0;
+
     const charges: string[] = [];
-    if (this.policeKilledCount > 0) charges.push('Police Officer par goli chalana / hamla (IPC 307 / 353)');
-    if (hadSwatOrArmyKills) charges.push('Special Task Force / Army par hamla (UAPA / Sec 121)');
-    if (this.policeVehiclesDestroyed > 0) charges.push('Sarkari Police Vahan tabah karna (PDPP Act)');
-    if (this.civilianKillsInSpree > 0) charges.push('Aam nagrik ki jaan lena (IPC 302 / 304)');
-    if (this.crimeCivilianAssaults > 0) charges.push('Bazaar mein maar-peet aur hinsa (IPC 323)');
-    if (this.crimeStolePoliceCar) charges.push('Police Jeep / Sarkari Vahan chori (IPC 379)');
-    if (this.crimeVehicleTheftCount > 0) charges.push('Private Gaadi / Bike chori (IPC 379)');
-    if (this.crimeUnlicensedWeapon || (!this.hasGunLicense && this.ownedWeapons.size > 1)) {
-      charges.push('Bina Valid Arms License ke hathiyar rakhna (Arms Act Sec 25)');
+    if (hadSwatOrArmyKills) {
+      charges.push('SWAT / Army jawan par ghatak hamla — Section 103 & Section 121 BNS [IPC 302 / 353]');
     }
-    if (this.crimeTrafficViolations > 0 || this.redLightViolations > 0 || this.trafficFineStrikes > 0) {
-      charges.push('Laal Batti todna / Bina Helmet-DL rash driving (MV Act)');
+    if (this.policeKilledCount > 0) {
+      charges.push('On-duty Police Officer ki hatya — Section 103 & Section 121 BNS [IPC 302 / 353]');
+    } else if (this.playerShotAtPolice) {
+      charges.push('Police par hamla / Sarkari kaam mein badha — Section 121 BNS [IPC 353 / 332]');
+    }
+    if (this.civilianKillsInSpree > 0) {
+      charges.push('Hatya / Aam nagrik ki jaan lena — Section 103 BNS [IPC 302]');
+    }
+    if (this.crimeCivilianAssaults > 0) {
+      charges.push('Swechha se chot pahunchana (Assault) — Section 115 BNS [IPC 323]');
+    }
+    if (this.crimeStolePoliceCar || this.crimeVehicleTheftCount > 0) {
+      charges.push('Gaadi / Sarkari Vahan Chori — Section 303 BNS [IPC 379]');
+    }
+    if (
+      this.crimeRecklessDriving ||
+      this.crimeTrafficViolations > 0 ||
+      this.redLightViolations > 0 ||
+      this.trafficFineStrikes > 0
+    ) {
+      charges.push('Rash Driving / Public Endangerment — Section 281 BNS [IPC 279]');
+    }
+    if (this.policeVehiclesDestroyed > 0) {
+      charges.push('Sarkari Vahan ko nuksan — PDPP Act & Section 324 BNS');
+    }
+    if (this.crimeUnlicensedWeapon || (!this.hasGunLicense && this.ownedWeapons.size > 1)) {
+      charges.push('Bina Valid Arms License hathiyar rakhna — Arms Act Sec 25');
     }
     if (charges.length === 0) {
-      charges.push('Police nirdeshon ka ullanghan aur bhagne ki koshish');
+      charges.push('Police nirdeshon ka ullanghan — Section 221 BNS [IPC 188]');
     }
 
     // Perform partial world cleanup before custody/courtroom entry (preserves Bank, Time & parked cars)
     this.performPartialWorldCleanup(false);
 
-    if (!this.hasGunLicense || starsAtArrest >= 3) {
+    if (!this.hasGunLicense || starsAtArrest >= 3 || hasFatalCharge) {
       const lost: string[] = [];
       for (const wid of WEAPON_ORDER) {
         if (wid === 'fists') continue;
@@ -3516,25 +3851,55 @@ export class GameEngine {
     let verdictKind: CourtroomVerdictKind = 'BAILABLE';
     let bailAmount = starsAtArrest === 1 ? COURT_BAIL_FEE_INR : 5000;
     let lawyerFee = LAWYER_FEE_1_2_INR;
+    let victimCompensation = 0;
     let jailDays = 1;
-    let verdictHeadline = 'ZAMANAT MANZOOR (Bail Granted)';
+    let verdictHeadline =
+      'ZAMANAT MANZOOR (Bailable Offense under BNS — Court Warning & Standard Bail)';
 
-    if (starsAtArrest >= 4 || hadSwatOrArmyKills) {
+    // Strict severity scaling: taking a human life (Section 103 BNS) is NEVER minor or routinely bailable
+    const interimBailEligible =
+      hasFatalCharge &&
+      !hadSwatOrArmyKills &&
+      totalFatalities <= 2 &&
+      this.probationDaysLeft <= 0;
+
+    const interimBailBreakdown = interimBailEligible
+      ? {
+          heavyBond: 75000 * totalFatalities,
+          seniorAdvocateFee: 40000,
+          victimCompensation: 50000 * totalFatalities,
+          total: 75000 * totalFatalities + 40000 + 50000 * totalFatalities,
+        }
+      : undefined;
+
+    if (hasFatalCharge) {
+      verdictKind = 'NO_BAIL';
+      bailAmount = 0;
+      lawyerFee = 0;
+      victimCompensation = 0;
+      jailDays = clamp(
+        2 + totalFatalities + (starsAtArrest >= 4 ? 1 : 0) + (this.probationDaysLeft > 0 ? 1 : 0),
+        3,
+        5,
+      );
+      verdictHeadline =
+        'ZAMANAT KHARIJ! Kisi ki jaan lena koi mamuli baat nahi hai — Section 103 BNS [IPC 302] ek gambhir non-bailable apradh hai!';
+    } else if (starsAtArrest >= 4 || hadSwatOrArmyKills) {
       verdictKind = 'NO_BAIL';
       bailAmount = 0;
       lawyerFee = 0;
       jailDays = 3;
-      verdictHeadline = 'ZAMANAT KHARIJ! SEEDHA JAIL (Non-Bailable Offense)';
+      verdictHeadline = 'ZAMANAT KHARIJ! SEEDHA JAIL (Non-Bailable 4–5★ Offense under BNS)';
     } else if (starsAtArrest === 3) {
       verdictKind = 'HIGH_BAIL';
       bailAmount = HIGH_BAIL_3_STAR_INR;
       lawyerFee = LAWYER_FEE_3_INR;
       jailDays = 2;
-      verdictHeadline = 'BHARI ZAMANAT YA JUDICIAL CUSTODY (High Bail Set)';
+      verdictHeadline = 'BHARI ZAMANAT YA JUDICIAL CUSTODY (Section 121 / 303 BNS)';
     }
 
     const primaryCharge = charges[0];
-    const secondaryCharge = charges[1] ?? 'Shanti bhang karne ka aarop';
+    const secondaryCharge = charges[1] ?? 'Lok-shanti bhang karne ka aarop (BNS)';
     const bailWords =
       bailAmount === COURT_BAIL_FEE_INR
         ? 'दो हज़ार पाँच सौ रुपये'
@@ -3543,65 +3908,80 @@ export class GameEngine {
           : 'अठारह हज़ार रुपये';
     const lawyerWords =
       lawyerFee === LAWYER_FEE_1_2_INR ? 'एक हज़ार पाँच सौ रुपये' : 'तीन हज़ार रुपये';
-    const jailDayWords = jailDays === 1 ? 'एक दिन' : jailDays === 2 ? 'दो दिन' : 'तीन दिन';
+    const jailDayWords =
+      jailDays === 1
+        ? 'एक दिन'
+        : jailDays === 2
+          ? 'दो दिन'
+          : jailDays === 3
+            ? 'तीन दिन'
+            : jailDays === 4
+              ? 'चार दिन'
+              : 'पांच दिन';
 
     const dialogueTurns: CourtroomDialogueTurn[] = [
       {
         speakerRole: 'judge',
         speakerName: 'Hon. Judge S.K. Deshmukh',
         title: 'District & Sessions Judge',
-        text: `Court ki karyawahi shuru hoti hai! ${starsAtArrest}★ star case mein mulzim kathgare mein khada hai. Inspector, aarop pesh karein.`,
-        tts: `कोर्ट की कार्यवाही शुरू होती है! ${starsAtArrest} स्टार केस में मुल्ज़िम कठघरे में खड़ा है। इंस्पेक्टर, आरोप पेश करें।`,
+        text: `Court ki karyawahi shuru hoti hai! ${starsAtArrest}★ case mein mulzim kathgare mein khada hai. Inspector, BNS ke tahat aarop pesh karein.`,
+        tts: `कोर्ट की कार्यवाही शुरू होती है! ${starsAtArrest} स्टार केस में मुल्ज़िम कठघरे में खड़ा है। इंस्पेक्टर, बीएनएस के तहत आरोप पेश करें।`,
       },
       {
         speakerRole: 'inspector',
         speakerName: 'Inspector Vijay Rathore',
         title: 'Arresting Officer · Bharat Police',
-        text: `Your Honour! Mulzim par "${primaryCharge}" aur "${secondaryCharge}" ke pakke saboot hain. Police ko iski gair-kanooni harkaton par sakht karwai karni padi.`,
-        tts: `योर ऑनर! मुल्ज़िम पर ${primaryCharge} और ${secondaryCharge} के पक्के सबूत हैं। पुलिस को इसकी गैर-कानूनी हरकतों पर सख्त कार्रवाई करनी पड़ी।`,
+        text: `Your Honour! Chargesheet mein "${primaryCharge}" aur "${secondaryCharge}" darj hain. Mulzim ke khilaf pakke gawah aur saboot maujood hain.`,
+        tts: `योर ऑनर! चार्जशीट में ${primaryCharge} और ${secondaryCharge} दर्ज हैं। मुल्ज़िम के खिलाफ पक्के गवाह और सबूत मौजूद हैं।`,
       },
       {
         speakerRole: 'lawyer',
         speakerName: 'Adv. Meera Sharma',
         title: 'Defense Vakil',
-        text:
-          verdictKind === 'BAILABLE'
-            ? `Maai-baap, mere client ne galti maani hai aur police ke saath sahyog kiya! Yeh chhota bailable maamla hai — naram zamanat par rihaai di jaaye.`
+        text: hasFatalCharge
+          ? `My Lord, yeh maamla Section 103 BNS ka zaroor hai, par mere client ka kehna hai ki ghatna aatmaraksha aur apratyakshit halaat mein hui. Nyayik dayalu drishti rakhi jaaye.`
+          : verdictKind === 'BAILABLE'
+            ? `Maai-baap, kisi ki jaan nahi gayi hai — yeh chhota bailable maamla hai! Mere client ne galti maani hai, naram zamanat par rihaai di jaaye.`
             : verdictKind === 'HIGH_BAIL'
-              ? `Your Honour, maamla gambhir zaroor hai par mera client pehli baar pesh hua hai. Bhari zamanat rakhkar bail manzoor ki jaaye.`
-              : `My Lord, police ne aatmaraksha ke halaat ko badha-chadhakar dikhaya hai! Mere client ko ek mauka aur diya jaaye.`,
-        tts:
-          verdictKind === 'BAILABLE'
-            ? `माई-बाप, मेरे क्लाइंट ने गलती मानी है और पुलिस के साथ सहयोग किया! यह छोटा ज़मानती मामला है — नरम ज़मानत पर रिहाई दी जाए।`
+              ? `Your Honour, maamla gambhir zaroor hai par koi fatal injury nahi hui. Bhari zamanat rakhkar bail manzoor ki jaaye.`
+              : `My Lord, police ne aatmaraksha ke halaat ko badha-chadhakar dikhaya hai! Mere client ko ek mauka diya jaaye.`,
+        tts: hasFatalCharge
+          ? `माई लॉर्ड, यह मामला सेक्शन एक सौ तीन बीएनएस का ज़रूर है, पर मेरे क्लाइंट का कहना है कि घटना आत्मरक्षा और अप्रत्याशित हालात में हुई।`
+          : verdictKind === 'BAILABLE'
+            ? `माई-बाप, किसी की जान नहीं गई है — यह छोटा ज़मानती मामला है! मेरे क्लाइंट ने गलती मानी है, नरम ज़मानत पर रिहाई दी जाए।`
             : verdictKind === 'HIGH_BAIL'
-              ? `योर ऑनर, मामला गंभीर ज़रूर है पर मेरा क्लाइंट पहली बार पेश हुआ है। भारी ज़मानत रखकर बेल मंजूर की जाए।`
+              ? `योर ऑनर, मामला गंभीर ज़रूर है पर कोई जानलेवा नुकसान नहीं हुआ। भारी ज़मानत रखकर बेल मंजूर की जाए।`
               : `माई लॉर्ड, पुलिस ने आत्मरक्षा के हालात को बढ़ा-चढ़ाकर दिखाया है! मेरे क्लाइंट को एक मौका और दिया जाए।`,
       },
       {
         speakerRole: 'inspector',
         speakerName: 'Inspector Vijay Rathore',
         title: 'Prosecution Rebuttal',
-        text:
-          verdictKind === 'NO_BAIL'
+        text: hasFatalCharge
+          ? `Sakht aitaraz Your Honour! Section 103 BNS ke tahat ${totalFatalities} jaan gayi hai — aise aropi ko mamuli bail dena nyay aur kanoon ke khilaf hoga!`
+          : verdictKind === 'NO_BAIL'
             ? `Sakht aitaraz Your Honour! Mulzim ne SWAT/Army aur kanoon par seedha hamla kiya hai — isko bahar chhodna shehar ke liye khatra hoga!`
-            : `Court sahab, shehar mein kanoon-vyavastha banaye rakhne ke liye is par bhari jurmana lagna zaroori hai.`,
-        tts:
-          verdictKind === 'NO_BAIL'
+            : `Court sahab, BNS niyamon ke mutabik shehar mein kanoon-vyavastha banaye rakhne ke liye is par uchit jurmana lagna zaroori hai.`,
+        tts: hasFatalCharge
+          ? `सख्त ऐतराज़ योर ऑनर! सेक्शन एक सौ तीन बीएनएस के तहत जान गई है — ऐसे आरोपी को मामूली बेल देना न्याय और कानून के खिलाफ होगा!`
+          : verdictKind === 'NO_BAIL'
             ? `सख्त ऐतराज़ योर ऑनर! मुल्ज़िम ने स्वाट आर्मी और कानून पर सीधा हमला किया है — इसको बाहर छोड़ना शहर के लिए खतरा होगा!`
-            : `कोर्ट साहब, शहर में कानून-व्यवस्था बनाए रखने के लिए इस पर भारी जुर्माना लगना ज़रूरी है।`,
+            : `कोर्ट साहब, बीएनएस नियमों के मुताबिक शहर में कानून-व्यवस्था बनाए रखने के लिए इस पर उचित जुर्माना लगना ज़रूरी है।`,
       },
       {
         speakerRole: 'judge',
         speakerName: 'Hon. Judge S.K. Deshmukh',
         title: 'Final Court Order',
-        text:
-          verdictKind === 'BAILABLE'
-            ? `Sabhi pakshon ko sunne ke baad: ${formatRs(bailAmount)} Bail Bond aur ${formatRs(lawyerFee)} Vakil Fee par Zamanat Manzoor ki jaati hai!`
+        text: hasFatalCharge
+          ? `Kisi ki jaan lena koi mamuli baat nahi hai, Section 103 BNS [IPC 302] ek gambhir non-bailable apradh hai! Zamanat kharij! Mulzim ko ${jailDays} din Bharat Central Jail bheja jaata hai.${interimBailEligible ? ' (Agar aap Senior Advocate rakhkar aatmaraksha sabit karna chahein to neeche sakht sharton par Conditional Interim Bail ka vikalp dekh sakte hain.)' : ''}`
+          : verdictKind === 'BAILABLE'
+            ? `Kisi jaan ka nuksan na hone ke karan BNS ke tahat bailable maamla maankar: ${formatRs(bailAmount)} Bail Bond aur ${formatRs(lawyerFee)} Vakil Fee par Zamanat Manzoor ki jaati hai!`
             : verdictKind === 'HIGH_BAIL'
               ? `Aaropon ki gambhirta dekhte hue: ${formatRs(bailAmount)} Bhari Zamanat + ${formatRs(lawyerFee)} Vakil Fee bharo, warna ${jailDays} din Bharat Central Jail!`
               : `Sangeen aur gair-zamanati aarop saabit! Zamanat kharij! Mulzim ko seedha ${jailDays} din Bharat Central Jail bheja jaata hai!`,
-        tts:
-          verdictKind === 'BAILABLE'
+        tts: hasFatalCharge
+          ? `किसी की जान लेना कोई मामूली बात नहीं है, सेक्शन एक सौ तीन बीएनएस एक गंभीर नॉन-बेलेबल अपराध है! ज़मानत ख़ारिज! मुल्ज़िम को ${jailDayWords} भारत सेंट्रल जेल भेजा जाता है!`
+          : verdictKind === 'BAILABLE'
             ? `सभी पक्षों को सुनने के बाद: ${bailWords} बेल बॉन्ड और ${lawyerWords} वकील फीस पर ज़मानत मंजूर की जाती है!`
             : verdictKind === 'HIGH_BAIL'
               ? `आरोपों की गंभीरता देखते हुए: ${bailWords} भारी ज़मानत और ${lawyerWords} वकील फीस भरो, वरना ${jailDayWords} भारत सेंट्रल जेल!`
@@ -3614,12 +3994,18 @@ export class GameEngine {
       arrestReason: reason,
       charges,
       confiscated: this.bustedConfiscated,
+      hasFatalCharge,
+      fatalitiesCount: totalFatalities,
       verdictKind,
       verdictHeadline,
       bailAmount,
       lawyerFee,
-      totalDue: bailAmount + lawyerFee,
+      victimCompensation,
+      totalDue: bailAmount + lawyerFee + victimCompensation,
       jailDays,
+      interimBailEligible,
+      interimBailApplied: false,
+      interimBailBreakdown,
       dialogueIndex: 0,
       dialogueTurns,
       argumentsFinished: false,
@@ -3665,22 +4051,23 @@ export class GameEngine {
       this.playerRig.root.rotation.set(0, Math.PI, 0);
       if (this.weaponMesh) this.weaponMesh.visible = false;
       if (this.fpWeaponGroup) this.fpWeaponGroup.visible = false;
+      this.resetThanaInspectorPose();
       this.ensurePrisonerVan(-150, 179.5, -Math.PI / 2);
       soundEngine.playJailDoorClang();
       soundEngine.playPoliceRadioChatter();
 
       const line =
-        'Thana No. 4 Lockup mein aa gaye ho! Ab Police Van mein baitho — District Court mein Judge sahab ke saamne pesh karna hai.';
+        'Thana No. 4 Lockup mein aa gaye ho! Inspector Vijay aapki FIR file check kar rahe hain — ab Police Van mein baithkar District Court chalo.';
       const tts =
-        'थाना नंबर चार लॉकअप में आ गए हो! अब पुलिस वैन में बैठो — डिस्ट्रिक्ट कोर्ट में जज साहब के सामने पेश करना है।';
+        'थाना नंबर चार लॉकअप में आ गए हो! इंस्पेक्टर विजय आपकी एफआईआर फाइल चेक कर रहे हैं — अब पुलिस वैन में बैठकर डिस्ट्रिक्ट कोर्ट चलो।';
       this.custodyCutscene = {
         phase,
         timer: 0,
-        duration: 4.0,
+        duration: 5.2,
         stepIndex: 1,
         title: 'BHARAT POLICE THANA NO. 4 · LOCKUP',
         subtitle: line,
-        stepLabel: 'Step 1 of 4 · Thana No. 4 Lockup & FIR Processing',
+        stepLabel: 'Step 1 of 4 · Inspector Arriving at Lockup Cell',
         startX: cell.x,
         startZ: cell.z,
         endX: cell.x,
@@ -3689,6 +4076,7 @@ export class GameEngine {
       this.setMode('CUSTODY');
       soundEngine.speakNpcLine('inspector', 704, tts, 'high');
     } else if (phase === 'VAN_TO_COURT') {
+      this.resetThanaInspectorPose();
       this.playerRig.root.visible = false;
       this.ensurePrisonerVan(-150, 180, -Math.PI / 2);
       soundEngine.playJailDoorClang();
@@ -3751,25 +4139,40 @@ export class GameEngine {
       this.custodyCutscene = {
         phase,
         timer: 0,
-        duration: 4.2,
+        duration: 4.6,
         stepIndex: 4,
         title: 'PRISONER VAN · TRANSFER TO BHARAT CENTRAL JAIL',
         subtitle: line,
-        stepLabel: 'Step 4 of 4 · Heavy Escort Van → Bharat Central Jail',
+        stepLabel: 'Step 4 of 4 · Heavy Escort Van → Bharat Central Jail Compound',
         startX: -90,
         startZ: 108,
         endX: -150,
-        endZ: 176,
+        endZ: 152,
       };
       this.setMode('CUSTODY');
       soundEngine.speakNpcLine('inspector', 707, tts, 'high');
     }
   }
 
+  private resetThanaInspectorPose(): void {
+    const insp = this.jailRig?.thanaInspectorActor;
+    if (!insp) return;
+    insp.x = insp.baseX;
+    insp.z = insp.baseZ;
+    insp.yaw = Math.PI;
+    insp.rig.root.position.set(insp.baseX, 0.28, insp.baseZ);
+    insp.rig.root.rotation.set(0, Math.PI, 0);
+    insp.rig.leftLeg.rotation.x = 0;
+    insp.rig.rightLeg.rotation.x = 0;
+    insp.rig.leftArm.rotation.x = 0;
+    insp.rig.rightArm.rotation.x = 0;
+  }
+
   public skipCustodyCutscene(): void {
     const cc = this.custodyCutscene;
     if (!cc || this.mode !== 'CUSTODY') return;
     soundEngine.stopPoliceVoice();
+    this.resetThanaInspectorPose();
     if (cc.phase === 'THANA_LOCKUP' || cc.phase === 'VAN_TO_COURT') {
       this.enterCourtroomFromCustody();
     } else if (cc.phase === 'VAN_TO_THANA_RELEASE') {
@@ -3781,6 +4184,7 @@ export class GameEngine {
 
   private enterCourtroomFromCustody(): void {
     this.custodyCutscene = null;
+    this.resetThanaInspectorPose();
     this.removePrisonerVan();
     if (!this.courtroomStage || !this.courtroomState) {
       this.finalizeThanaRelease();
@@ -3977,6 +4381,37 @@ export class GameEngine {
     this.emitHudSnapshot();
   }
 
+  public applySeniorAdvocateInterimBail(): void {
+    const cs = this.courtroomState;
+    if (
+      !cs ||
+      cs.verdictKind !== 'NO_BAIL' ||
+      !cs.interimBailEligible ||
+      cs.interimBailApplied ||
+      !cs.interimBailBreakdown
+    ) {
+      return;
+    }
+    const b = cs.interimBailBreakdown;
+    cs.verdictKind = 'CONDITIONAL_INTERIM_BAIL';
+    cs.interimBailApplied = true;
+    cs.bailAmount = b.heavyBond;
+    cs.lawyerFee = b.seniorAdvocateFee;
+    cs.victimCompensation = b.victimCompensation;
+    cs.totalDue = b.total;
+    cs.verdictHeadline =
+      'Aapko bari nahi kiya ja raha — sirf sakht sharton (All Weapons Confiscated, Arms License Revoked & 3-Day Bank Interest Freeze Probation) par Conditional Interim Bail di ja rahi hai!';
+    this.courtGavelTimer = 0.55;
+    soundEngine.playCourtGavel();
+    soundEngine.speakNpcLine(
+      'judge',
+      309,
+      'वरिष्ठ वकील की दलील सुनने के बाद चेतावनी: आपको बरी नहीं किया जा रहा! सिर्फ सख्त शर्तों, हथियार ज़ब्ती और बैंक प्रोबेशन के साथ अंतरिम ज़मानत दी जा रही है!',
+      'high',
+    );
+    this.emitHudSnapshot();
+  }
+
   public payCourtroomBail(source: 'cash' | 'bank'): { ok: boolean; message: string } {
     const cs = this.courtroomState;
     if (!cs || cs.verdictKind === 'NO_BAIL') {
@@ -4001,7 +4436,9 @@ export class GameEngine {
         'WITHDRAW',
         due,
         this.savingsPrincipal + this.savingsInterest,
-        `Court Bail & Vakil Fee (${cs.starsAtArrest}★ Case)`,
+        cs.verdictKind === 'CONDITIONAL_INTERIM_BAIL'
+          ? `Sec 103 BNS Conditional Interim Bail & Victim Relief (${cs.starsAtArrest}★)`
+          : `Court Bail & Vakil Fee (${cs.starsAtArrest}★ Case)`,
       );
     } else {
       if (this.playerCash < due) {
@@ -4014,11 +4451,32 @@ export class GameEngine {
       this.playerCash -= due;
     }
 
+    if (cs.verdictKind === 'CONDITIONAL_INTERIM_BAIL') {
+      // Strict non-acquittal penalties: confiscate ALL weapons, revoke Arms License, freeze Bank interest 3 days
+      const stripped: string[] = [];
+      for (const wid of WEAPON_ORDER) {
+        if (wid === 'fists') continue;
+        if (this.ownedWeapons.has(wid)) stripped.push(WEAPONS[wid].shortName);
+        this.ammo[wid] = 0;
+      }
+      this.ownedWeapons = new Set(['fists']);
+      this.activeWeapon = 'fists';
+      this.refreshPlayerWeaponMesh();
+      this.hasGunLicense = false;
+      this.pendingLicenseRevocation = 0;
+      this.bustedConfiscated = stripped;
+      this.probationDaysLeft = Math.max(this.probationDaysLeft, 3);
+      this.lastCompoundDay = this.getTotalGameDays();
+    }
+
     soundEngine.playCashPickup();
     this.saveGameState();
     this.callbacks.onToast({
-      text: `Zamanat Manzoor! -${formatRs(due)} (${source === 'bank' ? 'Royal Bank' : 'Cash'}) · Van Thana Gate ja rahi hai`,
-      tone: 'cash',
+      text:
+        cs.verdictKind === 'CONDITIONAL_INTERIM_BAIL'
+          ? `Interim Bail Paid (-${formatRs(due)}) · Weapons & License Confiscated · 3-Day Bank Interest Freeze!`
+          : `Zamanat Manzoor! -${formatRs(due)} (${source === 'bank' ? 'Royal Bank' : 'Cash'}) · Van Thana Gate ja rahi hai`,
+      tone: cs.verdictKind === 'CONDITIONAL_INTERIM_BAIL' ? 'warn' : 'cash',
     });
     this.startCustodyCutscene('VAN_TO_THANA_RELEASE');
     return { ok: true, message: `Paid ${formatRs(due)}. Police Van returning to Thana Gate!` };
@@ -4027,6 +4485,32 @@ export class GameEngine {
   public enterCentralJailFromCourt(): void {
     if (!this.courtroomState) return;
     this.startCustodyCutscene('VAN_TO_JAIL');
+  }
+
+  private getJailSchedulePhase(minutes: number): JailSchedulePhase {
+    const m = ((minutes % 1440) + 1440) % 1440;
+    if (m >= 360 && m < 1020) return 'WORK_SHIFT'; // 06:00 AM - 04:59 PM
+    if (m >= 1020 && m < 1230) return 'FREE_YARD'; // 05:00 PM - 08:29 PM (Escape Window)
+    return 'NIGHT_LOCKUP'; // 08:30 PM - 05:59 AM
+  }
+
+  private getJailScheduleMeta(phase: JailSchedulePhase): { title: string; sub: string } {
+    if (phase === 'WORK_SHIFT') {
+      return {
+        title: '06:00–17:00 · WORK SHIFT (MASHAKKAT)',
+        sub: 'Workshop [E] par carpentry/gardening kaam karo! Kaam chhodne par Guard warning bajegi.',
+      };
+    }
+    if (phase === 'FREE_YARD') {
+      return {
+        title: '17:00–20:30 · FREE YARD HOUR (ESCAPE WINDOW)',
+        sub: 'Low-security recreation! Chhotu [5/E] se Guard Distraction karao aur East Gate / Grate se bhaago!',
+      };
+    }
+    return {
+      title: '20:30–06:00 · NIGHT LOCKUP (BARRACKS BAND)',
+      sub: 'Cell bars locked! Cell Toilet [E] use karo ya Bunk Bed [E/1] par so kar Calendar Day + FD Interest badhao.',
+    };
   }
 
   private finalizeEnterCentralJail(): void {
@@ -4052,6 +4536,9 @@ export class GameEngine {
     this.activeWeapon = 'fists';
     this.refreshPlayerWeaponMesh();
 
+    const phase = this.getJailSchedulePhase(this.gameMinutes);
+    const meta = this.getJailScheduleMeta(phase);
+
     if (this.jailRig) {
       this.disabledColliders.delete(this.jailRig.mainGateCollider);
       this.disabledColliders.delete(this.jailRig.northGateCollider);
@@ -4060,9 +4547,40 @@ export class GameEngine {
       this.jailRig.northGateDoor.position.y = 2.3;
       this.jailRig.eastGateDoor.position.set(-150 + 21, 2.3, 150);
       this.jailRig.eastGateDoor.rotation.y = 0;
-      this.playerX = this.jailRig.yardCenter.x;
-      this.playerY = 0.24;
-      this.playerZ = this.jailRig.yardCenter.z;
+
+      if (phase === 'NIGHT_LOCKUP') {
+        this.disabledColliders.delete(this.jailRig.cellGateCollider);
+        this.jailRig.cellGateDoor.position.z = 150 - 7.5;
+        this.playerX = this.jailRig.cellInsidePos.x;
+        this.playerY = 0.24;
+        this.playerZ = this.jailRig.cellInsidePos.z;
+      } else {
+        this.disabledColliders.add(this.jailRig.cellGateCollider);
+        this.jailRig.cellGateDoor.position.z = 150 - 7.5 - 3.0;
+        this.playerX = this.jailRig.yardCenter.x;
+        this.playerY = 0.24;
+        this.playerZ = this.jailRig.yardCenter.z;
+      }
+
+      for (const inm of this.jailRig.inmates) {
+        inm.hp = inm.maxHp;
+        inm.bribed = false;
+        inm.defeated = false;
+        inm.attackCooldown = 0;
+        inm.staggerTimer = 0;
+        inm.alerted = false;
+        const target =
+          phase === 'WORK_SHIFT'
+            ? inm.workPos
+            : phase === 'NIGHT_LOCKUP'
+              ? inm.nightPos
+              : inm.yardPos;
+        inm.x = target.x;
+        inm.z = target.z;
+        inm.yaw = target.yaw;
+        inm.rig.root.position.set(inm.x, 0.24, inm.z);
+        inm.rig.root.rotation.set(0, inm.yaw, 0);
+      }
     } else {
       this.playerX = -150;
       this.playerY = 0;
@@ -4088,8 +4606,15 @@ export class GameEngine {
       taskStartZ: this.playerZ,
       spottedByGuard: false,
       nearStation: null,
-      statusBanner: `Saza: ${sentenceDaysTotal} Din · 4 Clear Raste: [1] Bunk Skip, [2] Workshop Kaam, [3] Bribe Jailer, [4] East Gate Break!`,
+      statusBanner: `Saza: ${sentenceDaysTotal} Din · ${meta.title}`,
       spotCooldown: 0,
+      lastSchedulePhase: phase,
+      workShiftDoneToday: false,
+      workSkipWarnTimer: 0,
+      distractionTimer: 0,
+      distractionCooldown: 0,
+      toiletCooldown: 0,
+      nearInmateDialogue: null,
     };
 
     soundEngine.playJailDoorClang();
@@ -4098,14 +4623,18 @@ export class GameEngine {
       'Jailer Mahendra Pal',
       'warden',
       920,
-      'Bharat Central Jail mein swagat hai! Saza poori karo, workshop mein kaam karo, ya kismat aazmao!',
-      'भारत सेंट्रल जेल में स्वागत है! सज़ा पूरी करो, वर्कशॉप में काम करो, या किस्मत आज़माओ!',
+      'Bharat Central Jail mein swagat hai! Subah Workshop kaam, shaam Free Yard, aur raat 8:30 lockup — discipline todne par warning milegi!',
+      'भारत सेंट्रल जेल में स्वागत है! सुबह वर्कशॉप काम, शाम फ्री यार्ड, और रात साढ़े आठ बजे लॉकअप — अनुशासन तोड़ने पर वॉर्निंग मिलेगी!',
       'high',
     );
   }
 
   private releaseFromJail(exitMode: 'LEGAL' | 'BRIBE' | 'ESCAPE'): void {
     const rig = this.jailRig;
+    if (rig) {
+      this.disabledColliders.add(rig.cellGateCollider);
+      rig.cellGateDoor.position.z = 150 - 7.5 - 3.0;
+    }
     // Restore escrowed weapons (if license won't be revoked on release, or user keeps them safely until renewal)
     for (const wid of this.jailEscrowedWeapons) {
       this.ownedWeapons.add(wid);
@@ -4161,7 +4690,7 @@ export class GameEngine {
         });
       }
     } else {
-      // Prison Break through Weak East Gate!
+      // Prison Break through Weak East Gate / Drainage Grate!
       if (rig) {
         this.disabledColliders.add(rig.eastGateCollider);
         rig.eastGateDoor.rotation.y = -Math.PI * 0.65;
@@ -4180,7 +4709,7 @@ export class GameEngine {
         'Jail Siren',
         'narrator',
         921,
-        'JAIL BREAK ALERT! Kaidi East Gate tod kar bhaag gaya! Sabhi SWAT units ghera daalo!',
+        'JAIL BREAK ALERT! Kaidi East Gate / Drainage Grate tod kar bhaag gaya! Sabhi SWAT units ghera daalo!',
         'जेल ब्रेक अलर्ट! कैदी ईस्ट गेट तोड़कर भाग गया! सभी स्वाट यूनिट्स घेरा डालो!',
         'high',
       );
@@ -4191,12 +4720,330 @@ export class GameEngine {
     }
     this.playerRig.root.position.set(this.playerX, 0, this.playerZ);
 
-    if (exitMode !== 'ESCAPE' && this.pendingLicenseRevocation > 0) {
-      this.triggerLicenseRevokedFlow();
-      return;
+    if (this.pendingLicenseRevocation > 0) {
+      if (exitMode === 'ESCAPE') {
+        this.hasGunLicense = false;
+        this.pendingLicenseRevocation = 0;
+        this.callbacks.onToast({
+          text: '3+★ Case: Aapka Arms License radd/suspend ho gaya hai! Baad mein Thana ya DM Office par renew karein.',
+          tone: 'warn',
+        });
+      } else {
+        this.triggerLicenseRevokedFlow();
+        return;
+      }
     }
 
     this.saveGameState();
+    this.emitHudSnapshot();
+  }
+
+  public jailSleepNight(): void {
+    if (this.mode !== 'JAIL' || !this.jailState || this.sleepCutscene) return;
+    if (this.jailState.activeTaskKind !== 'NONE') return;
+    this.startSleepCutscene('JAIL_BUNK');
+  }
+
+  private startSleepCutscene(location: SleepCutsceneLocation): void {
+    if (this.currentVehicle) {
+      this.currentVehicle.occupiedByPlayer = false;
+      this.currentVehicle = null;
+    }
+    this.adsActive = false;
+    this.npcSubtitle = null;
+    if (this.weaponMesh) this.weaponMesh.visible = false;
+    if (this.fpWeaponGroup) this.fpWeaponGroup.visible = false;
+    this.playerRig.helmetMesh.visible = false;
+    this.playerRig.root.visible = true;
+    this.playerRig.leftLeg.rotation.x = 0;
+    this.playerRig.rightLeg.rotation.x = 0;
+    this.playerRig.leftArm.rotation.x = 0;
+    this.playerRig.rightArm.rotation.x = 0;
+
+    if (location === 'HOME_BED') {
+      const bx = this.homeRig ? this.homeRig.bedPos.x + 1.0 : 37.4;
+      const bz = this.homeRig ? this.homeRig.bedPos.z - 3.6 : 83.8;
+      this.playerX = bx;
+      this.playerY = 1.38;
+      this.playerZ = bz;
+      this.playerRig.root.position.set(bx, 1.38, bz);
+      this.playerRig.root.rotation.set(-Math.PI / 2, 0, 0);
+      this.sleepCutscene = {
+        location: 'HOME_BED',
+        returnMode: 'PLAYING',
+        timer: 0,
+        duration: 5.4,
+        startMinutes: this.gameMinutes,
+        targetMinutes: 480, // 08:00 AM next morning
+        daySettled: false,
+        interestGain: 0,
+        remainingAfterWake: 0,
+        title: `${this.houseName ?? 'Apna Ghar'} · Bedroom Night Rest`,
+        subtitle:
+          'Aap apne bedroom ke double bed par aaram se so rahe hain — subah full HP/Stamina aur saved progress milega.',
+      };
+    } else {
+      const bunk = this.jailRig?.bunkPos ?? new THREE.Vector3(-166.4, 0.24, 140.4);
+      const bx = bunk.x - 1.2;
+      const bz = bunk.z - 1.1;
+      this.playerX = bx;
+      this.playerY = 1.08;
+      this.playerZ = bz;
+      this.playerRig.root.position.set(bx, 1.08, bz);
+      this.playerRig.root.rotation.set(-Math.PI / 2, Math.PI / 2, 0);
+      if (this.jailRig) {
+        this.jailRig.cellGateDoor.position.z = 150 - 7.5; // Cell bars shut for night sleep visual
+      }
+      this.sleepCutscene = {
+        location: 'JAIL_BUNK',
+        returnMode: 'JAIL',
+        timer: 0,
+        duration: 5.4,
+        startMinutes: this.gameMinutes,
+        targetMinutes: 6 * 60 + 5, // 06:05 AM Morning Roll Call
+        daySettled: false,
+        interestGain: 0,
+        remainingAfterWake: Math.max(0, (this.jailState?.remainingDays ?? 1) - 1),
+        title: 'Bharat Central Jail · Cell Bunk Lockup',
+        subtitle:
+          'Barracks cell lock ho chuki hai — aap cell bunk par so rahe hain. Subah 06:05 AM Roll Call par 1 din saza kam hogi.',
+      };
+    }
+
+    soundEngine.playUiClick();
+    if (location === 'JAIL_BUNK') {
+      soundEngine.playJailDoorClang();
+    }
+    this.setMode('SLEEP');
+  }
+
+  private settleSleepDayTransition(sc: NonNullable<GameEngine['sleepCutscene']>): void {
+    if (sc.daySettled) return;
+    sc.daySettled = true;
+
+    const prevInterest = this.totalInterestEarned;
+    this.dayCount += 1;
+    this.gameMinutes = sc.targetMinutes;
+    this.lastAartiSlot = -1;
+    this.lastAzaanSlot = -1;
+    this.syncBankInterest(true);
+    this.applyTimeOfDayLighting();
+    sc.interestGain = Math.max(0, this.totalInterestEarned - prevInterest);
+
+    if (this.probationDaysLeft > 0) {
+      this.probationDaysLeft = Math.max(0, this.probationDaysLeft - 1);
+    }
+
+    if (sc.location === 'HOME_BED') {
+      sc.subtitle =
+        this.probationDaysLeft > 0
+          ? `Day ${this.dayCount} ki subah ho gayi! Full Health/Stamina restored (Court Probation: ${this.probationDaysLeft} din baaki).`
+          : `Good Morning (Day ${this.dayCount})! Full Health/Stamina restored · Bank Interest +${formatRsExact(sc.interestGain)}.`;
+    } else {
+      sc.subtitle =
+        sc.remainingAfterWake <= 0.05
+          ? `Day ${this.dayCount} Subah 06:05 AM! Saza poori ho gayi — ab aap kanooni taur par riha hone wale hain!`
+          : `Day ${this.dayCount} Subah 06:05 AM Roll Call! Baaki Saza: ${sc.remainingAfterWake.toFixed(2)} din · Bank Interest +${formatRsExact(sc.interestGain)}.`;
+    }
+  }
+
+  public skipSleepCutscene(): void {
+    if (this.mode !== 'SLEEP' || !this.sleepCutscene) return;
+    this.finalizeSleepWake();
+  }
+
+  private finalizeSleepWake(): void {
+    const sc = this.sleepCutscene;
+    if (!sc) return;
+    if (!sc.daySettled) {
+      this.settleSleepDayTransition(sc);
+    }
+    const location = sc.location;
+    const interestGain = sc.interestGain;
+    this.gameMinutes = sc.targetMinutes;
+    this.applyTimeOfDayLighting();
+    this.sleepCutscene = null;
+
+    this.playerRig.root.rotation.set(0, this.playerYaw, 0);
+    this.playerRig.helmetMesh.visible = location === 'HOME_BED' && this.hasHelmet && this.helmetOn;
+    this.playerStamina = this.playerMaxStamina;
+    this.staminaExhausted = false;
+
+    if (location === 'HOME_BED') {
+      const wakePos = this.homeRig?.bedPos ?? new THREE.Vector3(36.4, 0.36, 87.4);
+      this.playerHp = this.playerMaxHp;
+      this.playerX = wakePos.x;
+      this.playerY = wakePos.y;
+      this.playerZ = wakePos.z;
+      this.playerRig.root.position.set(this.playerX, this.playerY, this.playerZ);
+      this.playerRig.root.visible = !this.firstPerson;
+      this.refreshPlayerWeaponMesh();
+      soundEngine.playCashPickup();
+      this.setMode('PLAYING');
+      this.saveGameState();
+      this.callbacks.onToast({
+        text:
+          this.probationDaysLeft > 0
+            ? `Good Morning (Day ${this.dayCount})! Full HP/Stamina restored · Probation: ${this.probationDaysLeft}d remaining`
+            : `Good Morning (Day ${this.dayCount})! Full HP/Stamina restored, Progress Saved & Bank Interest +${formatRsExact(interestGain)}.`,
+        tone: 'cash',
+      });
+      this.emitHudSnapshot();
+      return;
+    }
+
+    // JAIL_BUNK wake-up
+    if (this.jailRig) {
+      this.disabledColliders.add(this.jailRig.cellGateCollider);
+      this.jailRig.cellGateDoor.position.z = 150 - 7.5 - 3.0;
+      this.playerX = this.jailRig.bunkPos.x;
+      this.playerY = 0.24;
+      this.playerZ = this.jailRig.bunkPos.z;
+      this.playerRig.root.position.set(this.playerX, this.playerY, this.playerZ);
+    }
+    this.playerRig.root.visible = !this.firstPerson;
+    this.playerHp = Math.min(this.playerMaxHp, this.playerHp + 20);
+    soundEngine.playJailDoorClang();
+
+    if (this.jailState) {
+      this.jailState.remainingDays = Math.max(0, this.jailState.remainingDays - 1);
+      this.jailState.workShiftDoneToday = false;
+      this.jailState.workSkipWarnTimer = 0;
+      this.jailState.lastSchedulePhase = 'WORK_SHIFT';
+
+      if (this.jailState.remainingDays <= 0.05) {
+        this.callbacks.onToast({
+          text: `Subah ho gayi (Day ${this.dayCount})! Bank Interest +${formatRsExact(interestGain)} · Saza Poori!`,
+          tone: 'cash',
+        });
+        this.releaseFromJail('LEGAL');
+        return;
+      }
+
+      this.jailState.statusBanner = `Nayi Subah (Day ${this.dayCount}, 06:05 AM)! Bank Interest +${formatRsExact(interestGain)} · Baaki Saza: ${this.jailState.remainingDays.toFixed(2)}d`;
+      this.callbacks.onToast({
+        text: `Bunk Sleep Complete · Day ${this.dayCount} (+${formatRsExact(interestGain)} Bank Interest)`,
+        tone: 'cash',
+      });
+    }
+
+    this.setMode('JAIL');
+    this.saveGameState();
+    this.emitHudSnapshot();
+  }
+
+  private stepSleepCutscene(dt: number): void {
+    const sc = this.sleepCutscene;
+    if (!sc) return;
+
+    sc.timer += dt;
+    const p = clamp(sc.timer / Math.max(0.1, sc.duration), 0, 1);
+
+    // Smoothly sweep clock forward across midnight toward dawn during deep rest
+    if (p >= 0.2 && p < 0.85) {
+      const k = clamp((p - 0.2) / 0.65, 0, 1);
+      let span = sc.targetMinutes - sc.startMinutes;
+      if (span <= 60) span += 1440;
+      this.gameMinutes = (sc.startMinutes + span * k) % 1440;
+      this.applyTimeOfDayLighting();
+    }
+
+    if (p >= 0.56 && !sc.daySettled) {
+      this.settleSleepDayTransition(sc);
+    }
+
+    // Orbit camera gently around the bedroom bed or jail cell bunk
+    const bx = this.playerX;
+    const bz = this.playerZ;
+    const orbit = p * Math.PI * 0.42;
+    if (sc.location === 'HOME_BED') {
+      this._camDesired.set(
+        bx - 2.6 + Math.sin(orbit) * 1.4,
+        3.25 - Math.sin(p * Math.PI) * 0.35,
+        bz + 3.4 - Math.cos(orbit) * 0.8,
+      );
+      this._camTarget.set(bx, 1.35, bz);
+    } else {
+      this._camDesired.set(
+        bx + 3.1 - Math.sin(orbit) * 0.9,
+        2.65,
+        bz + 2.7 + Math.cos(orbit) * 0.6,
+      );
+      this._camTarget.set(bx, 1.05, bz);
+    }
+    this.camera.position.lerp(this._camDesired, 1 - Math.exp(-5 * dt));
+    this.camera.lookAt(this._camTarget);
+
+    if (sc.timer >= sc.duration) {
+      this.finalizeSleepWake();
+      return;
+    }
+
+    this.hudAccum += dt;
+    if (this.hudAccum >= 0.08) {
+      this.hudAccum = 0;
+      this.emitHudSnapshot();
+    }
+  }
+
+  public jailUseToilet(): void {
+    if (this.mode !== 'JAIL' || !this.jailState) return;
+    if (this.jailState.toiletCooldown > 0) {
+      this.callbacks.onToast({
+        text: `Thoda ruko (${Math.ceil(this.jailState.toiletCooldown)}s) — abhi fresh huye the.`,
+        tone: 'info',
+      });
+      return;
+    }
+    this.jailState.toiletCooldown = 12;
+    this.playerStamina = Math.min(this.playerMaxStamina, this.playerStamina + 35);
+    this.playerHp = Math.min(this.playerMaxHp, this.playerHp + 10);
+    soundEngine.playUiClick();
+    this.jailState.statusBanner = 'Cell Toilet use kiya · Fresh feel kar rahe ho (+35 Stamina, +10 HP)!';
+    this.callbacks.onToast({
+      text: 'Cell Toilet Used · Stamina & Energy Restored!',
+      tone: 'info',
+    });
+    this.emitHudSnapshot();
+  }
+
+  public jailTriggerInmateDistraction(): void {
+    if (this.mode !== 'JAIL' || !this.jailState) return;
+    const phase = this.getJailSchedulePhase(this.gameMinutes);
+    if (phase === 'NIGHT_LOCKUP') {
+      this.callbacks.onToast({
+        text: 'Abhi 20:30–06:00 Night Lockup hai! Chhotu ki Guard Distraction 17:00–20:30 Free Yard Hour mein hoti hai.',
+        tone: 'warn',
+      });
+      return;
+    }
+    if (this.jailState.distractionCooldown > 0 || this.jailState.distractionTimer > 0) {
+      this.callbacks.onToast({
+        text:
+          this.jailState.distractionTimer > 0
+            ? `Guard Distraction abhi active hai (${Math.ceil(this.jailState.distractionTimer)}s)! East Gate bhaago!`
+            : `Chhotu taiyaar ho raha hai (${Math.ceil(this.jailState.distractionCooldown)}s cooldown).`,
+        tone: 'info',
+      });
+      return;
+    }
+    this.jailState.distractionTimer = 14;
+    this.jailState.distractionCooldown = 36;
+    soundEngine.playPoliceWhistle();
+    this.jailState.statusBanner =
+      'CHHOTU DISTRACTION ACTIVE (14s)! Guards West Yard bhaage — Weak East Gate / Grate [E] tod do!';
+    this.speakWithSubtitle(
+      'Chhotu Mechanic',
+      'citizen',
+      801,
+      'Oye Sipahi ji! Mess ke paas paani ka pipe phat gaya hai, jaldi idhar dekho! (Bhai ab East Gate bhaag!)',
+      'ओये सिपाही जी! मेस के पास पानी का पाइप फट गया है, जल्दी इधर देखो!',
+      'high',
+    );
+    this.callbacks.onToast({
+      text: 'Guard Distraction (14s)! Guards West taraf mud gaye — East Gate [E] par jaao!',
+      tone: 'cash',
+    });
     this.emitHudSnapshot();
   }
 
@@ -4215,6 +5062,13 @@ export class GameEngine {
   public jailPerformWork(): void {
     if (this.mode !== 'JAIL' || !this.jailState) return;
     if (this.jailState.activeTaskKind !== 'NONE') return;
+    if (this.getJailSchedulePhase(this.gameMinutes) === 'NIGHT_LOCKUP') {
+      this.callbacks.onToast({
+        text: 'Night Lockup mein Workshop band hai! Subah 06:00 AM ya Bunk [E] par so kar Work Shift aayegi.',
+        tone: 'warn',
+      });
+      return;
+    }
     if (this.jailRig && Math.hypot(this.playerX - this.jailRig.workshopPos.x, this.playerZ - this.jailRig.workshopPos.z) > 3.6) {
       this.playerX = this.jailRig.workshopPos.x;
       this.playerZ = this.jailRig.workshopPos.z;
@@ -4227,7 +5081,7 @@ export class GameEngine {
     this.jailState.taskDuration = 2.2;
     this.jailState.taskStartX = this.playerX;
     this.jailState.taskStartZ = this.playerZ;
-    this.jailState.statusBanner = 'Jail Workshop mein kaam chal raha hai (+₹2,000 & -50% Sentence)...';
+    this.jailState.statusBanner = 'Jail Workshop mein Carpentry & Gardening Shift chal rahi hai (+₹2,000 & -50% Saza)...';
     soundEngine.playUiClick();
     this.emitHudSnapshot();
   }
@@ -4276,19 +5130,25 @@ export class GameEngine {
   public jailStartPrisonBreak(): void {
     if (this.mode !== 'JAIL' || !this.jailState) return;
     if (this.jailState.activeTaskKind !== 'NONE') return;
+    if (this.getJailSchedulePhase(this.gameMinutes) === 'NIGHT_LOCKUP') {
+      this.callbacks.onToast({
+        text: 'Night Lockup mein cell bars locked hain! 17:00–20:30 Free Yard Hour ya Guard Distraction [5] ka intezaar karo.',
+        tone: 'warn',
+      });
+      return;
+    }
     if (this.jailRig) {
       const distGate = Math.hypot(
         this.playerX - this.jailRig.escapePos.x,
         this.playerZ - this.jailRig.escapePos.z,
       );
       if (distGate > 3.8) {
-        // Guide player toward East Gate visually instead of silently breaking from across yard
         this.camYaw = -Math.PI / 2;
         this.jailState.statusBanner =
-          'Pehle yellow Guard Vision Cones se bachkar RED Weak East Gate (→) par jaao, phir [E] dabao!';
+          'Tip: 17:00–20:30 Free Yard mein Chhotu [5] se Guard Distraction karao aur RED Weak East Gate / Grate (→) par [E] dabao!';
         soundEngine.playUiClick();
         this.callbacks.onToast({
-          text: 'East Gate par pahunch kar [E] ya Break Lock dabao (Guard cones se bacho)!',
+          text: 'East Gate / Grate par pahunch kar [E] dabao (Free Yard + Chhotu Distraction sabse safe hai)!',
           tone: 'info',
         });
         this.emitHudSnapshot();
@@ -4297,10 +5157,10 @@ export class GameEngine {
     }
     this.jailState.activeTaskKind = 'ESCAPE';
     this.jailState.taskTimer = 0;
-    this.jailState.taskDuration = 3.0;
+    this.jailState.taskDuration = this.getJailSchedulePhase(this.gameMinutes) === 'FREE_YARD' ? 2.5 : 3.2;
     this.jailState.taskStartX = this.playerX;
     this.jailState.taskStartZ = this.playerZ;
-    this.jailState.statusBanner = 'Weak East Gate ka taala tod rahe hain — Guard cone aaye to ruko/bhaago!';
+    this.jailState.statusBanner = 'Weak East Gate / Drainage Grate tod rahe hain — Guard cone aaye to ruko/bhaago!';
     soundEngine.playLockpickClick();
     this.emitHudSnapshot();
   }
@@ -4789,13 +5649,30 @@ export class GameEngine {
       this.playerRig.root.visible = true;
     }
 
-    this.playerX = 0;
-    this.playerZ = 8;
+    this.houseName = null;
+    this.hasSavedGame = false;
+    this.playerOutfit = 'default';
+    this.wardrobeWeapons.clear();
+    this.wardrobeArmor = 0;
+    this.wardrobeMedkits = 0;
+    this.pujaCooldown = 0;
+    this.applyPlayerOutfit('default');
+    this.homeRig?.updateNameplate('Apna Ghar');
+    const homeSign = this.buildingSigns.find((s) => s.id === 'sign-home');
+    if (homeSign) homeSign.title = 'Apna Ghar (Family House)';
+
+    if (this.homeRig) {
+      this.playerX = this.homeRig.spawnPos.x;
+      this.playerZ = this.homeRig.spawnPos.z;
+    } else {
+      this.playerX = 0;
+      this.playerZ = 8;
+    }
     this.playerY = 0;
     this.playerVy = 0;
     this.playerYaw = 0;
     this.camYaw = 0;
-    this.playerRig.root.position.set(0, 0, 8);
+    this.playerRig.root.position.set(this.playerX, 0, this.playerZ);
     this.playerRig.root.rotation.y = 0;
     this.gameMinutes = 480;
     this.dayCount = 1;
@@ -4812,6 +5689,8 @@ export class GameEngine {
     this.nextPassbookId = 1;
     this.blessedTimer = 0;
     this.prayerAnim = null;
+    this.probationDaysLeft = 0;
+    this.sleepCutscene = null;
     this.courtroomState = null;
     this.custodyCutscene = null;
     this.removePrisonerVan();
@@ -4821,6 +5700,9 @@ export class GameEngine {
     this.jailEscrowedWeapons = [];
     this.jailEscrowedAmmo = {};
     this.disabledColliders.clear();
+    if (this.jailRig) {
+      this.disabledColliders.add(this.jailRig.cellGateCollider);
+    }
     this.randomizeThanaPrisoners(true);
     this.clearWaypoint(true);
     this.applyTimeOfDayLighting();
@@ -4866,6 +5748,7 @@ export class GameEngine {
     this.policeVehiclesDestroyed = 0;
     this.crimeUnlicensedWeapon = false;
     this.crimeTrafficViolations = 0;
+    this.crimeRecklessDriving = false;
     this.crimeVehicleTheftCount = 0;
     this.crimeStolePoliceCar = false;
     this.crimeCivilianAssaults = 0;
@@ -5284,22 +6167,70 @@ export class GameEngine {
   }
 
   private tryPlayerAttack(): void {
-    if (this.fireCooldown > 0 || this.currentVehicle || this.mode !== 'PLAYING') return;
+    if (this.fireCooldown > 0 || this.currentVehicle) return;
+    if (this.mode !== 'PLAYING' && this.mode !== 'JAIL') return;
 
-    const spec = WEAPONS[this.activeWeapon];
+    const effectiveWeapon: WeaponId = this.mode === 'JAIL' ? 'fists' : this.activeWeapon;
+    const spec = WEAPONS[effectiveWeapon];
     this.fireCooldown = spec.fireRateMs / 1000;
 
-    if (this.activeWeapon !== 'fists') {
+    if (effectiveWeapon !== 'fists') {
       this.playerYaw = this.camYaw;
       this.playerRig.root.rotation.y = this.playerYaw;
     }
 
-    if (this.activeWeapon === 'fists') {
+    if (effectiveWeapon === 'fists') {
       this.punchAnimTimer = 0.24;
       const fwdX = -Math.sin(this.playerYaw);
       const fwdZ = -Math.cos(this.playerYaw);
 
       let hitAny = false;
+      if (this.mode === 'JAIL' && this.jailRig) {
+        for (const inm of this.jailRig.inmates) {
+          if (!inm.isRival || inm.defeated) continue;
+          const dx = inm.x - this.playerX;
+          const dz = inm.z - this.playerZ;
+          const dist = Math.hypot(dx, dz);
+          if (dist <= spec.range + 0.5) {
+            const dot = dist > 0.01 ? (dx / dist) * fwdX + (dz / dist) * fwdZ : 1;
+            if (dot > 0.12) {
+              hitAny = true;
+              inm.hp = Math.max(0, inm.hp - spec.damage);
+              inm.staggerTimer = 0.36;
+              inm.alerted = true;
+              inm.bribed = false;
+              const kx = dist > 0.05 ? dx / dist : fwdX;
+              const kz = dist > 0.05 ? dz / dist : fwdZ;
+              inm.x = clamp(inm.x + kx * 1.15, -168.5, -132.5);
+              inm.z = clamp(inm.z + kz * 1.15, 132.5, 152.0);
+              if (inm.hp <= 0) {
+                inm.defeated = true;
+                inm.alerted = false;
+                inm.rig.root.rotation.x = -Math.PI / 2;
+                inm.rig.root.position.y = 0.42;
+                this.playerCash += 350;
+                soundEngine.playCashPickup();
+                if (this.jailState) {
+                  this.jailState.statusBanner = `${inm.name} ko maar kar dher kar diya! +₹350 Rival Cash Loot!`;
+                }
+                this.callbacks.onToast({
+                  text: `Rival Defeated: ${inm.name} KO! (+₹350 Cash)`,
+                  tone: 'cash',
+                });
+              } else {
+                this.callbacks.onToast({
+                  text: `Hit ${inm.name}! (${inm.hp}/${inm.maxHp} HP)`,
+                  tone: 'info',
+                });
+              }
+            }
+          }
+        }
+        soundEngine.playPunch(hitAny);
+        this.emitHudSnapshot();
+        return;
+      }
+
       for (const npc of this.npcs) {
         if (npc.dead) continue;
         const dx = npc.x - this.playerX;
@@ -6847,6 +7778,9 @@ export class GameEngine {
     } else if (this.mode === 'CUSTODY') {
       this.stepCustodyCutscene(rawDt);
       this.updateDynamicInteriorLight();
+    } else if (this.mode === 'SLEEP') {
+      this.stepSleepCutscene(rawDt);
+      this.updateDynamicInteriorLight();
     } else if (this.mode === 'COURTROOM') {
       this.stepCourtroom(rawDt);
       this.updateDynamicInteriorLight();
@@ -7156,10 +8090,57 @@ export class GameEngine {
     const p = clamp(cc.timer / Math.max(0.1, cc.duration), 0, 1);
 
     if (cc.phase === 'THANA_LOCKUP') {
-      const cell = this.jailRig?.thanaLockupCellPos ?? new THREE.Vector3(-140.8, 0.28, 161.4);
-      const t = performance.now() * 0.002;
-      this._camDesired.set(cell.x - 1.2 + Math.sin(t) * 0.4, 2.35, cell.z + 5.8);
-      this._camTarget.set(cell.x, 1.35, cell.z);
+      const cell = this.jailRig?.thanaLockupCellPos ?? new THREE.Vector3(-141.2, 0.28, 161.5);
+      const insp = this.jailRig?.thanaInspectorActor;
+      const inspDest = this.jailRig?.thanaInspectorPos ?? new THREE.Vector3(-140.8, 0.28, 165.55);
+      const doorPos = this.jailRig?.thanaDoorwayPos ?? new THREE.Vector3(-150, 0.18, 174.5);
+
+      if (insp) {
+        if (p < 0.34) {
+          // Walk from Duty Desk to Lockup Cell Review Chair
+          const k = p / 0.34;
+          const ix = THREE.MathUtils.lerp(insp.baseX, inspDest.x, k);
+          const iz = THREE.MathUtils.lerp(insp.baseZ, inspDest.z, k);
+          const dx = inspDest.x - insp.baseX;
+          const dz = inspDest.z - insp.baseZ;
+          insp.rig.root.position.set(ix, 0.28, iz);
+          insp.rig.root.rotation.set(0, Math.atan2(-dx, -dz), 0);
+          const swing = Math.sin(performance.now() * 0.012) * 0.52;
+          insp.rig.leftLeg.rotation.x = swing;
+          insp.rig.rightLeg.rotation.x = -swing;
+          insp.rig.leftArm.rotation.x = 0.65;
+          insp.rig.rightArm.rotation.x = -swing * 0.35;
+          cc.stepLabel = 'Step 1 of 4 · Inspector Arriving at Lockup Cell';
+        } else if (p < 0.72) {
+          // Sit at cell-front review chair facing the bars & review FIR file
+          insp.rig.root.position.set(inspDest.x, 0.08, inspDest.z);
+          insp.rig.root.rotation.set(0, 0, 0); // Facing north toward lockup bars
+          insp.rig.leftLeg.rotation.x = -1.15;
+          insp.rig.rightLeg.rotation.x = -1.15;
+          insp.rig.leftArm.rotation.x = 0.75;
+          insp.rig.rightArm.rotation.x = 0.75 + Math.sin(performance.now() * 0.01) * 0.22;
+          cc.stepLabel = 'Step 1 of 4 · Inspector Sitting & Reviewing FIR File';
+        } else {
+          // Stand up and escort toward the Thana front doorway / Prisoner Van
+          const k = (p - 0.72) / 0.28;
+          const ix = THREE.MathUtils.lerp(inspDest.x, doorPos.x, k * 0.65);
+          const iz = THREE.MathUtils.lerp(inspDest.z, doorPos.z, k * 0.65);
+          const dx = doorPos.x - inspDest.x;
+          const dz = doorPos.z - inspDest.z;
+          insp.rig.root.position.set(ix, 0.28, iz);
+          insp.rig.root.rotation.set(0, Math.atan2(-dx, -dz), 0);
+          const swing = Math.sin(performance.now() * 0.012) * 0.5;
+          insp.rig.leftLeg.rotation.x = swing;
+          insp.rig.rightLeg.rotation.x = -swing;
+          insp.rig.leftArm.rotation.x = 0.6;
+          insp.rig.rightArm.rotation.x = 0.45;
+          cc.stepLabel = 'Step 1 of 4 · Inspector Escorting You to Prisoner Van';
+        }
+      }
+
+      const t = performance.now() * 0.0018;
+      this._camDesired.set(cell.x - 1.8 + Math.sin(t) * 0.45, 2.55, cell.z + 6.4);
+      this._camTarget.set((cell.x + inspDest.x) * 0.5, 1.15, (cell.z + inspDest.z) * 0.5);
       this.camera.position.lerp(this._camDesired, 1 - Math.exp(-5 * dt));
       this.camera.lookAt(this._camTarget);
     } else {
@@ -7180,7 +8161,7 @@ export class GameEngine {
           vz = THREE.MathUtils.lerp(180, 108, k);
           yaw = 0;
         }
-      } else {
+      } else if (cc.phase === 'VAN_TO_THANA_RELEASE') {
         // (-90, 108) -> South to (-90, 180) -> West to (-150, 178)
         if (p < 0.52) {
           const k = p / 0.52;
@@ -7192,6 +8173,27 @@ export class GameEngine {
           vx = THREE.MathUtils.lerp(-90, -150, k);
           vz = THREE.MathUtils.lerp(180, cc.endZ, k);
           yaw = Math.PI / 2;
+        }
+      } else {
+        // VAN_TO_JAIL: (-90, 108) -> South to (-90, 180) -> West to (-150, 180) -> North into Central Jail Yard (-150, 152)
+        if (p < 0.42) {
+          const k = p / 0.42;
+          vx = -90;
+          vz = THREE.MathUtils.lerp(108, 180, k);
+          yaw = Math.PI;
+        } else if (p < 0.78) {
+          const k = (p - 0.42) / 0.36;
+          vx = THREE.MathUtils.lerp(-90, -150, k);
+          vz = 180;
+          yaw = Math.PI / 2;
+        } else {
+          const k = (p - 0.78) / 0.22;
+          vx = -150;
+          vz = THREE.MathUtils.lerp(180, cc.endZ, k);
+          yaw = 0;
+          if (this.jailRig) {
+            this.jailRig.mainGateDoor.position.y = THREE.MathUtils.lerp(2.3, 6.4, Math.min(1, k * 1.4));
+          }
         }
       }
       if (this.prisonerVan) {
@@ -7214,13 +8216,15 @@ export class GameEngine {
       }
       const fwdX = -Math.sin(yaw);
       const fwdZ = -Math.cos(yaw);
-      this._camDesired.set(vx - fwdX * 10.5 + 3.2, 4.4, vz - fwdZ * 10.5);
-      this._camTarget.set(vx, 1.4, vz);
+      // Elevated top-down / cinematic escort camera framing the Prisoner Van along city streets
+      this._camDesired.set(vx - fwdX * 8.8 + 4.2, 10.6, vz - fwdZ * 8.8 + 3.2);
+      this._camTarget.set(vx, 1.2, vz);
       this.camera.position.lerp(this._camDesired, 1 - Math.exp(-5 * dt));
       this.camera.lookAt(this._camTarget);
     }
 
     if (cc.timer >= cc.duration && !soundEngine.isSpeaking()) {
+      this.resetThanaInspectorPose();
       if (cc.phase === 'THANA_LOCKUP') {
         this.startCustodyCutscene('VAN_TO_COURT');
         return;
@@ -7261,6 +8265,20 @@ export class GameEngine {
         this.interiorLight.distance = 28;
       } else {
         this.interiorLight.intensity = 0;
+      }
+      return;
+    }
+    if (this.mode === 'SLEEP') {
+      if (this.sleepCutscene?.location === 'JAIL_BUNK') {
+        this.interiorLight.position.set(-166, 4.6, 140);
+        this.interiorLight.color.setHex(0xbae6fd);
+        this.interiorLight.intensity = 2.2;
+        this.interiorLight.distance = 24;
+      } else {
+        this.interiorLight.position.set(34, 4.2, 85);
+        this.interiorLight.color.setHex(0xffedd5);
+        this.interiorLight.intensity = 2.6;
+        this.interiorLight.distance = 22;
       }
       return;
     }
@@ -7342,6 +8360,83 @@ export class GameEngine {
 
     this.stepTimeOfDay(dt);
     if (js.spotCooldown > 0) js.spotCooldown = Math.max(0, js.spotCooldown - dt);
+    if (js.distractionTimer > 0) js.distractionTimer = Math.max(0, js.distractionTimer - dt);
+    if (js.distractionCooldown > 0) js.distractionCooldown = Math.max(0, js.distractionCooldown - dt);
+    if (js.toiletCooldown > 0) js.toiletCooldown = Math.max(0, js.toiletCooldown - dt);
+
+    const schedulePhase = this.getJailSchedulePhase(this.gameMinutes);
+    const meta = this.getJailScheduleMeta(schedulePhase);
+
+    // Watchtower sweeping searchlight spotlights
+    const nowSec = performance.now() * 0.001;
+    rig.watchtowerBeams.forEach((beam, idx) => {
+      beam.rotation.y = Math.sin(nowSec * 0.45 + idx * 1.55) * 0.95 + idx * 1.25;
+      const cone = beam.children[1] as THREE.Mesh | undefined;
+      if (cone) {
+        const bMat = cone.material as THREE.MeshBasicMaterial;
+        bMat.opacity = schedulePhase === 'NIGHT_LOCKUP' ? 0.28 : schedulePhase === 'FREE_YARD' ? 0.14 : 0.08;
+      }
+    });
+
+    // Detect schedule transitions (Morning Work Shift / Evening Free Yard / Night Lockup Whistle)
+    if (js.lastSchedulePhase !== schedulePhase) {
+      js.lastSchedulePhase = schedulePhase;
+      js.workSkipWarnTimer = 0;
+      if (schedulePhase === 'NIGHT_LOCKUP') {
+        soundEngine.playPoliceWhistle();
+        soundEngine.playJailDoorClang();
+        this.disabledColliders.delete(rig.cellGateCollider);
+        if (this.playerX > -150 - 12.8) {
+          this.playerX = rig.cellInsidePos.x;
+          this.playerZ = rig.cellInsidePos.z;
+          this.playerRig.root.position.set(this.playerX, 0.24, this.playerZ);
+        }
+        js.statusBanner = 'NIGHT WHISTLE (20:30)! Sabhi kaidi cell mein lock! Toilet [E] ya Bunk [E/1] par so jao.';
+        this.callbacks.onToast({
+          text: 'Night Lockup Whistle (20:30): Cell gate locked! Sleep at Bunk [E] for +1 Day & FD Interest.',
+          tone: 'warn',
+        });
+      } else if (schedulePhase === 'WORK_SHIFT') {
+        js.workShiftDoneToday = false;
+        soundEngine.playJailDoorClang();
+        this.disabledColliders.add(rig.cellGateCollider);
+        js.statusBanner = 'SUBAH 06:00 ROLL CALL! Work Shift shuru — Workshop [E] par jaao!';
+        this.callbacks.onToast({
+          text: 'Morning Work Shift (06:00–17:00): Report to Workshop [E] to earn ₹2,000 & cut sentence!',
+          tone: 'info',
+        });
+      } else {
+        soundEngine.playPoliceWhistle();
+        this.disabledColliders.add(rig.cellGateCollider);
+        js.statusBanner = '17:00 FREE YARD HOUR! Chhotu [5/E] se Distraction karao aur East Gate / Grate se bhaagne ka mauka!';
+        this.callbacks.onToast({
+          text: 'Evening Free Yard Window (17:00–20:30): Guards relaxed — best Escape Window!',
+          tone: 'cash',
+        });
+      }
+    }
+
+    // Slide barracks iron-bar door smoothly open (day) or locked shut (night lockup)
+    const targetDoorZ = schedulePhase === 'NIGHT_LOCKUP' ? 150 - 7.5 : 150 - 7.5 - 3.0;
+    rig.cellGateDoor.position.z = THREE.MathUtils.lerp(rig.cellGateDoor.position.z, targetDoorZ, Math.min(1, dt * 6));
+
+    // Work Shift skipping warning if inmate idles outside workshop
+    if (schedulePhase === 'WORK_SHIFT' && !js.workShiftDoneToday && js.activeTaskKind !== 'WORK') {
+      const nearWorkshop = Math.hypot(this.playerX - rig.workshopPos.x, this.playerZ - rig.workshopPos.z) < 4.5;
+      if (!nearWorkshop) {
+        js.workSkipWarnTimer += dt;
+        if (js.workSkipWarnTimer >= 20) {
+          js.workSkipWarnTimer = 0;
+          soundEngine.playPoliceWhistle();
+          this.playerStamina = Math.max(15, this.playerStamina - 10);
+          js.statusBanner = 'GUARD WARNING: Work Shift chal rahi hai! Workshop [E] par kaam karo warna saza badhegi!';
+          this.callbacks.onToast({
+            text: 'Guard Warning: Work Shift skip mat karo! Workshop [2/E] par kaam karo!',
+            tone: 'warn',
+          });
+        }
+      }
+    }
 
     // Arrow keys look inside jail
     if (this.keys.has('ArrowLeft')) this.camYaw = normalizeAngle(this.camYaw + 2.0 * dt);
@@ -7354,25 +8449,33 @@ export class GameEngine {
     const nearEastGateZone =
       Math.hypot(this.playerX - rig.escapePos.x, this.playerZ - rig.escapePos.z) < 6.0;
 
-    // Update patrolling prison guards & 3D translucent vision cones (only alarm near East Gate / during Break)
+    // Update patrolling prison guards & 3D translucent vision cones
     let spottedNow = false;
+    const isFreeYard = schedulePhase === 'FREE_YARD';
+    const guardSpeed = js.distractionTimer > 0 ? 3.3 : isFreeYard ? 1.75 : 2.4;
+    const visionRange = js.distractionTimer > 0 ? 4.4 : isFreeYard ? 5.9 : 7.8;
+
     for (const g of rig.guards) {
-      const targetWp = g.waypoints[g.wpIndex];
+      const targetWp =
+        js.distractionTimer > 0
+          ? { x: -150 - 11.2, z: 150 - 11.2 }
+          : g.waypoints[g.wpIndex];
       const dx = targetWp.x - g.x;
       const dz = targetWp.z - g.z;
       const dist = Math.hypot(dx, dz);
       if (dist < 0.45) {
-        g.wpIndex = (g.wpIndex + 1) % g.waypoints.length;
+        if (js.distractionTimer <= 0) {
+          g.wpIndex = (g.wpIndex + 1) % g.waypoints.length;
+        }
       } else {
-        const speed = 2.4;
         const desiredYaw = Math.atan2(-dx, -dz);
         g.yaw = lerpAngle(g.yaw, desiredYaw, 1 - Math.exp(-7 * dt));
-        g.x += (dx / dist) * speed * dt;
-        g.z += (dz / dist) * speed * dt;
+        g.x += (dx / dist) * guardSpeed * dt;
+        g.z += (dz / dist) * guardSpeed * dt;
       }
       g.rig.root.position.set(g.x, 0.24, g.z);
       g.rig.root.rotation.y = g.yaw;
-      const swing = Math.sin(performance.now() * 0.008) * 0.45;
+      const swing = dist >= 0.45 ? Math.sin(performance.now() * 0.008) * 0.45 : 0;
       g.rig.leftLeg.rotation.x = swing;
       g.rig.rightLeg.rotation.x = -swing;
 
@@ -7380,7 +8483,7 @@ export class GameEngine {
       const toPz = this.playerZ - g.z;
       const dP = Math.hypot(toPx, toPz);
       let seesPlayer = false;
-      if (dP < 7.8) {
+      if (dP < visionRange) {
         const gFwdX = -Math.sin(g.yaw);
         const gFwdZ = -Math.cos(g.yaw);
         const dot = (toPx / Math.max(0.01, dP)) * gFwdX + (toPz / Math.max(0.01, dP)) * gFwdZ;
@@ -7395,22 +8498,192 @@ export class GameEngine {
         coneMat.color.setHex(0xef4444);
         coneMat.opacity = 0.36;
       } else {
-        coneMat.color.setHex(0xfef08a);
-        coneMat.opacity = 0.22;
+        coneMat.color.setHex(js.distractionTimer > 0 ? 0x38bdf8 : 0xfef08a);
+        coneMat.opacity = isFreeYard ? 0.16 : 0.22;
       }
     }
     js.spottedByGuard = spottedNow;
 
-    // Proximity checks for the 4 jail stations
+    // Animate 7 diverse fellow prisoners (including 2 hostile rivals) & collect proximity dialogue
+    let closestInmateDist = 3.3;
+    let closestTip: { name: string; text: string } | null = null;
+    let allyInmateDist = Infinity;
+    let nearestActiveRivalDist = Infinity;
+    const playerInCell =
+      this.playerX < -150 - 12.6 &&
+      this.playerZ > 150 - 10.5 &&
+      this.playerZ < 150 - 5.0;
+
+    for (const inm of rig.inmates) {
+      if (inm.staggerTimer > 0) inm.staggerTimer = Math.max(0, inm.staggerTimer - dt);
+      if (inm.attackCooldown > 0) inm.attackCooldown = Math.max(0, inm.attackCooldown - dt);
+
+      if (inm.isRival && inm.defeated) {
+        inm.rig.root.position.set(inm.x, 0.42, inm.z);
+        inm.rig.root.rotation.x = -Math.PI / 2;
+        inm.rig.root.rotation.y = inm.yaw;
+        continue;
+      }
+
+      const distPlayer = Math.hypot(this.playerX - inm.x, this.playerZ - inm.z);
+      const canAggroRival =
+        inm.isRival &&
+        !inm.defeated &&
+        !inm.bribed &&
+        schedulePhase !== 'NIGHT_LOCKUP' &&
+        !playerInCell &&
+        (distPlayer < 9.5 || (inm.alerted && distPlayer < 14.5));
+
+      if (canAggroRival) {
+        inm.alerted = true;
+        const dxP = this.playerX - inm.x;
+        const dzP = this.playerZ - inm.z;
+        inm.yaw = lerpAngle(inm.yaw, Math.atan2(-dxP, -dzP), 1 - Math.exp(-10 * dt));
+        if (distPlayer > 1.55 && inm.staggerTimer <= 0) {
+          const step = Math.min(distPlayer - 1.4, 2.75 * dt);
+          inm.x = clamp(inm.x + (dxP / Math.max(0.01, distPlayer)) * step, -162.5, -132.5);
+          inm.z = clamp(inm.z + (dzP / Math.max(0.01, distPlayer)) * step, 132.5, 152.0);
+          const walk = Math.sin(nowSec * 11 + inm.seedId) * 0.52;
+          inm.rig.leftLeg.rotation.x = walk;
+          inm.rig.rightLeg.rotation.x = -walk;
+          inm.rig.leftArm.rotation.x = -walk * 0.85;
+          inm.rig.rightArm.rotation.x = walk * 0.85;
+        } else if (distPlayer <= 1.85 && inm.attackCooldown <= 0 && inm.staggerTimer <= 0) {
+          inm.attackCooldown = 1.45;
+          inm.rig.rightArm.rotation.x = 1.4;
+          soundEngine.playPunch(true);
+          this.playerHp = Math.max(0, this.playerHp - 9);
+          js.statusBanner = `${inm.name} ne hamla kiya! Fight [Click/J], Bhaago (>9.5m) ya Bribe ₹${inm.bribeCost} [6/B]!`;
+          if (this.playerHp <= 0) {
+            this.playerHp = 65;
+            this.playerX = rig.bunkPos.x;
+            this.playerZ = rig.bunkPos.z;
+            this.playerRig.root.position.set(this.playerX, 0.24, this.playerZ);
+            inm.alerted = false;
+            js.remainingDays += 0.15;
+            soundEngine.playPoliceWhistle();
+            this.callbacks.onToast({
+              text: 'Jail Infirmary: Rival ladai mein behosh ho gaye! (65 HP restored, +0.15d recovery)',
+              tone: 'warn',
+            });
+          }
+        }
+        inm.rig.root.position.set(inm.x, 0.24, inm.z);
+        inm.rig.root.rotation.set(0, inm.yaw, 0);
+      } else {
+        if (inm.isRival && inm.alerted && (distPlayer >= 11.5 || playerInCell || schedulePhase === 'NIGHT_LOCKUP')) {
+          inm.alerted = false;
+        }
+        const target =
+          schedulePhase === 'WORK_SHIFT'
+            ? inm.workPos
+            : schedulePhase === 'NIGHT_LOCKUP'
+              ? inm.nightPos
+              : inm.yardPos;
+        const dx = target.x - inm.x;
+        const dz = target.z - inm.z;
+        const dTarget = Math.hypot(dx, dz);
+        if (dTarget > 0.25) {
+          const step = Math.min(dTarget, 2.2 * dt);
+          inm.x += (dx / dTarget) * step;
+          inm.z += (dz / dTarget) * step;
+          inm.yaw = lerpAngle(inm.yaw, Math.atan2(-dx, -dz), 1 - Math.exp(-8 * dt));
+          const walk = Math.sin(nowSec * 8 + inm.seedId) * 0.48;
+          inm.rig.leftLeg.rotation.x = walk;
+          inm.rig.rightLeg.rotation.x = -walk;
+          inm.rig.leftArm.rotation.x = -walk * 0.8;
+          inm.rig.rightArm.rotation.x = walk * 0.8;
+        } else {
+          inm.yaw = lerpAngle(inm.yaw, target.yaw, 1 - Math.exp(-6 * dt));
+          inm.rig.leftLeg.rotation.x = 0;
+          inm.rig.rightLeg.rotation.x = 0;
+          if (inm.role === 'exercise' && schedulePhase !== 'NIGHT_LOCKUP') {
+            const reps = Math.sin(nowSec * 3.8 + inm.seedId);
+            inm.rig.root.position.y = 0.24 - Math.abs(reps) * 0.14;
+            inm.rig.leftArm.rotation.x = -Math.PI * 0.45 + reps * 0.35;
+            inm.rig.rightArm.rotation.x = -Math.PI * 0.45 + reps * 0.35;
+          } else if (inm.role === 'eat' && schedulePhase === 'FREE_YARD') {
+            inm.rig.root.position.y = 0.24;
+            inm.rig.rightArm.rotation.x = -0.9 + Math.sin(nowSec * 4.5) * 0.35;
+            inm.rig.leftArm.rotation.x = -0.35;
+          } else if (inm.role === 'workshop' || schedulePhase === 'WORK_SHIFT') {
+            inm.rig.root.position.y = 0.24;
+            inm.rig.rightArm.rotation.x = -0.7 + Math.sin(nowSec * 6.5 + inm.seedId) * 0.45;
+            inm.rig.leftArm.rotation.x = -0.5;
+          } else {
+            inm.rig.root.position.y = 0.24;
+            inm.rig.rightArm.rotation.x = Math.sin(nowSec * 2.4 + inm.seedId) * 0.22;
+            inm.rig.leftArm.rotation.x = -Math.sin(nowSec * 2.4 + inm.seedId) * 0.18;
+          }
+        }
+        inm.rig.root.position.x = inm.x;
+        inm.rig.root.position.z = inm.z;
+        if (dTarget > 0.25) inm.rig.root.position.y = 0.24;
+        inm.rig.root.rotation.set(0, inm.yaw, 0);
+      }
+
+      if (inm.ally) allyInmateDist = distPlayer;
+      if (inm.isRival && !inm.defeated && !inm.bribed && distPlayer < nearestActiveRivalDist) {
+        nearestActiveRivalDist = distPlayer;
+      }
+      if (distPlayer < closestInmateDist) {
+        closestInmateDist = distPlayer;
+        if (inm.isRival) {
+          closestTip = {
+            name: inm.name,
+            text: inm.bribed
+              ? 'Theek hai bhai, haftaa mil gaya! Ab is saza mein tujhe kuch nahi bolunga.'
+              : `Oye naye kaidi! Is yard mein humara raaj chalta hai — lad le [Click/J], door bhaag, ya ₹${inm.bribeCost} haftaa de [6/B/E]!`,
+          };
+        } else if (inm.ally) {
+          closestTip = {
+            name: `${inm.name} (Escape Ally)`,
+            text:
+              schedulePhase === 'FREE_YARD'
+                ? 'Bhai, abhi 17:00–20:30 Free Yard hai! [E / 5] dabao, main Guards ko mess taraf bulaata hoon — tum East Gate / Drainage Grate tod do!'
+                : 'Shaam 17:00 se 20:30 Free Yard Hour ka wait karo! Tab main guards ko distract karunga aur East Gate weak hai.',
+          };
+        } else if (inm.role === 'exercise') {
+          closestTip = {
+            name: inm.name,
+            text: 'Subah 06:00–17:00 Workshop mein carpentry/gardening zaroor karo — paise bhi milte hain aur saza aadhi hoti hai!',
+          };
+        } else if (inm.role === 'eat') {
+          closestTip = {
+            name: inm.name,
+            text: 'Raat 8:30 lockup mein Bunk [E/1] par sone se din badhta hai aur Royal Bank ka FD/Savings interest bhi judta hai!',
+          };
+        } else if (inm.role === 'workshop') {
+          closestTip = {
+            name: inm.name,
+            text: 'Jailer Mahendra raat 23:30 par North Gate se ₹25k–₹50k bribe lekar chhod deta hai — par 35% alarm risk hai!',
+          };
+        } else {
+          closestTip = {
+            name: inm.name,
+            text: 'Watchtower spotlights aur guard vision cones par nazar rakho. Blind spot milte hi Grate se bhaag sakte ho!',
+          };
+        }
+      }
+    }
+    js.nearInmateDialogue = closestTip;
+
+    // Proximity checks for jail stations, Inmate Ally & Rivals
     js.nearStation = null;
-    if (Math.hypot(this.playerX - rig.bunkPos.x, this.playerZ - rig.bunkPos.z) < 3.6) {
+    if (Math.hypot(this.playerX - rig.bunkPos.x, this.playerZ - rig.bunkPos.z) < 3.0) {
       js.nearStation = 'BUNK';
+    } else if (Math.hypot(this.playerX - rig.toiletPos.x, this.playerZ - rig.toiletPos.z) < 2.6) {
+      js.nearStation = 'TOILET';
     } else if (Math.hypot(this.playerX - rig.workshopPos.x, this.playerZ - rig.workshopPos.z) < 3.6) {
       js.nearStation = 'WORKSHOP';
     } else if (Math.hypot(this.playerX - rig.wardenPos.x, this.playerZ - rig.wardenPos.z) < 3.6) {
       js.nearStation = 'WARDEN';
     } else if (Math.hypot(this.playerX - rig.escapePos.x, this.playerZ - rig.escapePos.z) < 3.8) {
       js.nearStation = 'ESCAPE_GATE';
+    } else if (allyInmateDist < 3.2) {
+      js.nearStation = 'INMATE_ALLY';
+    } else if (nearestActiveRivalDist < 3.6) {
+      js.nearStation = 'INMATE_RIVAL';
     }
 
     // Active task progress (WORK or ESCAPE)
@@ -7426,9 +8699,9 @@ export class GameEngine {
         this.playerX = safePos.x;
         this.playerZ = safePos.z;
         this.playerRig.root.position.set(this.playerX, this.playerY, this.playerZ);
-        js.statusBanner = 'Guard ne East Gate par dekh liya! Guard cone mudne ke baad dobara try karo!';
+        js.statusBanner = 'Guard ne East Gate par dekh liya! Free Yard mein Chhotu [5] se distraction karaao!';
         this.callbacks.onToast({
-          text: 'Guard Cone ne East Gate par pakad liya! Yellow cone hatne par lock todo.',
+          text: 'Guard Cone ne East Gate par pakad liya! Chhotu [5] se distraction karaao ya cone hatne do.',
           tone: 'warn',
         });
       } else if (movedAway) {
@@ -7443,6 +8716,8 @@ export class GameEngine {
           js.taskTimer = 0;
           if (doneKind === 'WORK') {
             js.workCount += 1;
+            js.workShiftDoneToday = true;
+            js.workSkipWarnTimer = 0;
             this.playerCash += JAIL_WORK_WAGE_INR;
             js.remainingDays = Math.max(0, js.remainingDays * 0.5 - 0.18);
             soundEngine.playCashPickup();
@@ -7487,11 +8762,59 @@ export class GameEngine {
 
     this.updateCamera(dt);
 
+    if (!js.statusBanner) {
+      js.statusBanner = meta.title;
+    }
+
     this.hudAccum += dt;
     if (this.hudAccum >= 0.1) {
       this.hudAccum = 0;
       this.emitHudSnapshot();
     }
+  }
+
+  public jailBribeRival(rivalId?: string): boolean {
+    if (this.mode !== 'JAIL' || !this.jailRig || !this.jailState) return false;
+    const candidates = this.jailRig.inmates
+      .filter((i) => i.isRival && !i.defeated && !i.bribed)
+      .sort(
+        (a, b) =>
+          Math.hypot(a.x - this.playerX, a.z - this.playerZ) -
+          Math.hypot(b.x - this.playerX, b.z - this.playerZ),
+      );
+    const target = rivalId ? candidates.find((c) => c.id === rivalId) : candidates[0];
+    if (!target) {
+      this.callbacks.onToast({ text: 'Sabhi rivals abhi shaant ya knocked-out hain.', tone: 'info' });
+      return false;
+    }
+    const cost = target.bribeCost;
+    this.syncBankInterest(true);
+    const sav = this.savingsPrincipal + this.savingsInterest;
+    if (this.playerCash >= cost) {
+      this.playerCash -= cost;
+    } else if (sav >= cost) {
+      const ratio = cost / Math.max(0.01, sav);
+      this.savingsInterest = Math.max(0, this.savingsInterest * (1 - ratio));
+      this.savingsPrincipal = Math.max(0, this.savingsPrincipal * (1 - ratio));
+      this.recordPassbook('SAVINGS', 'WITHDRAW', cost, this.savingsPrincipal + this.savingsInterest, `Jail Truce (${target.name})`);
+    } else {
+      this.callbacks.onToast({
+        text: `${target.name} ko haftaa dene ke liye ${formatRs(cost)} chahiye!`,
+        tone: 'warn',
+      });
+      return false;
+    }
+    target.bribed = true;
+    target.alerted = false;
+    soundEngine.playCashPickup();
+    this.jailState.statusBanner = `${target.name} ko ${formatRs(cost)} haftaa diya — ab woh tang nahi karega!`;
+    this.callbacks.onToast({
+      text: `Truce Paid: ${target.name} (-${formatRs(cost)})`,
+      tone: 'cash',
+    });
+    this.saveGameState();
+    this.emitHudSnapshot();
+    return true;
   }
 
   private stepTimeOfDay(dt: number): void {
@@ -7578,6 +8901,7 @@ export class GameEngine {
     if (this.punchAnimTimer > 0) this.punchAnimTimer -= dt;
     if (this.globalGreetCooldown > 0) this.globalGreetCooldown -= dt;
     if (this.sacredBlessCooldown > 0) this.sacredBlessCooldown -= dt;
+    if (this.pujaCooldown > 0) this.pujaCooldown = Math.max(0, this.pujaCooldown - dt);
 
     // Smooth Day-Noon-Midnight progression
     this.stepTimeOfDay(dt);
@@ -8076,12 +9400,13 @@ export class GameEngine {
       }
     }
 
-    // Vertical Jump physics
-    if (this.playerY > 0 || this.playerVy !== 0) {
+    // Vertical Jump physics (respect raised Jail compound floor at y = 0.24)
+    const groundY = this.mode === 'JAIL' ? 0.24 : 0;
+    if (this.playerY > groundY || this.playerVy !== 0) {
       this.playerVy -= 23.5 * dt;
       this.playerY += this.playerVy * dt;
-      if (this.playerY <= 0) {
-        this.playerY = 0;
+      if (this.playerY <= groundY) {
+        this.playerY = groundY;
         this.playerVy = 0;
       }
     }
@@ -8090,7 +9415,7 @@ export class GameEngine {
     this.playerRig.root.rotation.y = this.playerYaw;
 
     // Limb animation (tuck legs slightly mid-air during jump)
-    const inAir = this.playerY > 0.08;
+    const inAir = this.playerY > groundY + 0.08;
     const swing = inAir ? 0.35 : this.playerSpeed > 0.2 ? Math.sin(this.walkPhase) * 0.55 : 0;
     this.playerRig.leftLeg.rotation.x = swing;
     this.playerRig.rightLeg.rotation.x = inAir ? -0.45 : -swing;
@@ -8099,7 +9424,7 @@ export class GameEngine {
     if (this.punchAnimTimer > 0) {
       const p = Math.sin((this.punchAnimTimer / 0.24) * Math.PI);
       this.playerRig.rightArm.rotation.x = p * 1.45;
-    } else if (this.activeWeapon !== 'fists') {
+    } else if (this.mode !== 'JAIL' && this.activeWeapon !== 'fists') {
       // Aiming stance pointing gun barrel along -Z
       this.playerRig.rightArm.rotation.x = Math.PI / 2 - 0.1;
     } else {
@@ -8280,6 +9605,7 @@ export class GameEngine {
         const probe = this.resolveCollisions(v.x + fwdX * 0.45, v.z + fwdZ * 0.45, colR, v.id);
         if (Math.hypot(probe.x - (v.x + fwdX * 0.45), probe.z - (v.z + fwdZ * 0.45)) > 0.18) {
           v.hitCooldowns.set(-99, 0.55);
+          this.crimeRecklessDriving = true;
           this.damageVehicle(v, (impactSpeed - 12) * 3.2, true);
           if (v.kind === 'bike') {
             const rawRiderDmg = (impactSpeed - 11.5) * 1.6;
@@ -8306,6 +9632,9 @@ export class GameEngine {
 
           if (impactSpeed > 4.0 && !v.hitCooldowns.has(npc.id)) {
             v.hitCooldowns.set(npc.id, 0.45);
+            if (v.occupiedByPlayer && impactSpeed > 8.5) {
+              this.crimeRecklessDriving = true;
+            }
             const dmg = Math.round(clamp((impactSpeed - 3.2) * 10.5 * v.massFactor, 12, 160));
             const knockback = Math.min(18, impactSpeed * 0.9 * v.massFactor);
             this.damageNpc(npc, dmg, nx, nz, knockback, v.occupiedByPlayer);
@@ -8490,6 +9819,9 @@ export class GameEngine {
       }
 
       for (const a of this.jailRig.thanaActors) {
+        if (a === this.jailRig.thanaInspectorActor && this.mode === 'CUSTODY' && this.custodyCutscene?.phase === 'THANA_LOCKUP') {
+          continue;
+        }
         if (!a.active) {
           a.rig.root.visible = false;
           continue;
@@ -9323,6 +10655,7 @@ export class GameEngine {
 
   private emitHudSnapshot(): void {
     const blips: MinimapBlip[] = [
+      { x: 30, z: 109.5, type: 'home' },
       { x: this.gunShopPos.x, z: this.gunShopPos.z, type: 'gunshop' },
       { x: this.hospitalPos.x, z: this.hospitalPos.z, type: 'hospital' },
       { x: this.bankPos.x, z: this.bankPos.z, type: 'bank' },
@@ -9572,10 +10905,11 @@ export class GameEngine {
     }
 
     if (this.mode === 'JAIL' && this.jailRig && this.jailState) {
+      const allyInmate = this.jailRig.inmates.find((i) => i.ally);
       const stationTags: {
         id: string;
-        station: 'BUNK' | 'WORKSHOP' | 'WARDEN' | 'ESCAPE_GATE';
-        pos: THREE.Vector3;
+        station: 'BUNK' | 'TOILET' | 'WORKSHOP' | 'WARDEN' | 'ESCAPE_GATE' | 'INMATE_ALLY';
+        pos: { x: number; z: number };
         title: string;
         subtitle: string;
       }[] = [
@@ -9584,7 +10918,14 @@ export class GameEngine {
           station: 'BUNK',
           pos: this.jailRig.bunkPos,
           title: '1. Cell Bunk',
-          subtitle: 'Skip Saza (+Bank Interest) [E]',
+          subtitle: 'Sleep Night (+1 Day & FD Interest) [E]',
+        },
+        {
+          id: 'jail-toilet',
+          station: 'TOILET',
+          pos: this.jailRig.toiletPos,
+          title: 'Cell Toilet',
+          subtitle: 'Freshen Up (+Stamina/HP) [E]',
         },
         {
           id: 'jail-workshop',
@@ -9604,12 +10945,21 @@ export class GameEngine {
           id: 'jail-escape',
           station: 'ESCAPE_GATE',
           pos: this.jailRig.escapePos,
-          title: '4. Weak East Gate',
-          subtitle: 'Dodge Cones -> Break Out (3★) [E]',
+          title: '4. Weak East Gate / Grate',
+          subtitle: 'Free Yard Escape Window [E]',
         },
       ];
+      if (allyInmate) {
+        stationTags.push({
+          id: 'jail-ally',
+          station: 'INMATE_ALLY',
+          pos: { x: allyInmate.x, z: allyInmate.z },
+          title: '5. Chhotu Mechanic',
+          subtitle: 'Guard Distraction [E/5]',
+        });
+      }
       for (const st of stationTags) {
-        this._proj.set(st.pos.x, 3.7, st.pos.z).project(this.camera);
+        this._proj.set(st.pos.x, 3.3, st.pos.z).project(this.camera);
         if (this._proj.z < 1) {
           worldLabels.push({
             id: st.id,
@@ -9619,6 +10969,111 @@ export class GameEngine {
             screenY: (-this._proj.y * 0.5 + 0.5) * h,
             jailStation: st.station,
           });
+        }
+      }
+      for (const rival of this.jailRig.inmates) {
+        if (!rival.isRival) continue;
+        this._proj.set(rival.x, 2.55, rival.z).project(this.camera);
+        if (this._proj.z > 0 && this._proj.z < 1) {
+          worldLabels.push({
+            id: `jail-rival-${rival.id}`,
+            title: rival.defeated
+              ? `${rival.name} · KO`
+              : rival.bribed
+                ? `${rival.name} · Truce`
+                : `${rival.name} (${rival.hp}/${rival.maxHp} HP)`,
+            subtitle: rival.defeated
+              ? 'Knocked Out'
+              : rival.bribed
+                ? 'Haftaa Paid · Safe'
+                : `Fight [Click/J] · Bribe ${formatRs(rival.bribeCost)} [6/B]`,
+            screenX: (this._proj.x * 0.5 + 0.5) * w,
+            screenY: (-this._proj.y * 0.5 + 0.5) * h,
+            jailStation: 'INMATE_RIVAL',
+            rivalId: rival.id,
+          });
+        }
+      }
+    }
+
+    // Crisp HUD Building Sign Projections (all visible landmarks within 65m in front of camera)
+    if (this.mode === 'PLAYING' && this.houseName !== null) {
+      const visibleSigns: { sign: BuildingSignInfo; dist: number; sx: number; sy: number }[] = [];
+      for (const sign of this.buildingSigns) {
+        const dist = Math.hypot(sign.x - this.playerX, sign.z - this.playerZ);
+        if (dist > (sign.maxDist ?? 65)) continue;
+        this._proj.set(sign.x, sign.y, sign.z).project(this.camera);
+        if (this._proj.z > 0 && this._proj.z < 1 && Math.abs(this._proj.x) <= 0.88 && Math.abs(this._proj.y) <= 0.85) {
+          visibleSigns.push({
+            sign,
+            dist,
+            sx: (this._proj.x * 0.5 + 0.5) * w,
+            sy: (-this._proj.y * 0.5 + 0.5) * h,
+          });
+        }
+      }
+      visibleSigns.sort((a, b) => a.dist - b.dist);
+      for (const item of visibleSigns.slice(0, 6)) {
+        worldLabels.push({
+          id: item.sign.id,
+          title: item.sign.title,
+          subtitle: `${item.sign.subtitle} · ${Math.round(item.dist)}m`,
+          screenX: item.sx,
+          screenY: item.sy,
+          isBuildingSign: true,
+          signAccent: item.sign.accent,
+        });
+      }
+    }
+
+    // Personal Indian Family House interior stations
+    let nearHomeStation: 'PUJA' | 'BED' | 'WARDROBE' | null = null;
+    if (this.mode === 'PLAYING' && !this.currentVehicle && this.homeRig) {
+      const distHome = Math.hypot(this.playerX - this.homeRig.homeCenter.x, this.playerZ - this.homeRig.homeCenter.z);
+      if (distHome < 18) {
+        const homeStations: {
+          id: string;
+          kind: 'PUJA' | 'BED' | 'WARDROBE';
+          pos: THREE.Vector3;
+          title: string;
+          subtitle: string;
+        }[] = [
+          {
+            id: 'home-puja',
+            kind: 'PUJA',
+            pos: this.homeRig.pujaPos,
+            title: 'Home Puja Corner',
+            subtitle: 'Press E for Aarti & Blessing',
+          },
+          {
+            id: 'home-bed',
+            kind: 'BED',
+            pos: this.homeRig.bedPos,
+            title: 'Bedroom (Save & Sleep)',
+            subtitle: 'Press E to Rest (+1 Day, Full HP)',
+          },
+          {
+            id: 'home-wardrobe',
+            kind: 'WARDROBE',
+            pos: this.homeRig.wardrobePos,
+            title: 'Almirah / Wardrobe',
+            subtitle: 'Press E for Outfits & Locker',
+          },
+        ];
+        for (const hs of homeStations) {
+          const d = Math.hypot(this.playerX - hs.pos.x, this.playerZ - hs.pos.z);
+          if (d < 3.4) nearHomeStation = hs.kind;
+          this._proj.set(hs.pos.x, 2.35, hs.pos.z).project(this.camera);
+          if (this._proj.z > 0 && this._proj.z < 1) {
+            worldLabels.push({
+              id: hs.id,
+              title: hs.title,
+              subtitle: hs.subtitle,
+              screenX: (this._proj.x * 0.5 + 0.5) * w,
+              screenY: (-this._proj.y * 0.5 + 0.5) * h,
+              homeStation: hs.kind,
+            });
+          }
         }
       }
     }
@@ -9655,6 +11110,12 @@ export class GameEngine {
         this.currentVehicle.kind === 'bike' && this.hasHelmet && !this.helmetOn
           ? 'Press F to exit bike · Press L to put on ISI Helmet (Challan Safety)'
           : 'Press F to exit vehicle';
+    } else if (nearHomeStation === 'PUJA') {
+      nearPrompt = 'Home Puja Corner · Press E for Puja & Blessed Regen';
+    } else if (nearHomeStation === 'BED') {
+      nearPrompt = 'Bedroom · Press E to Save Progress, Sleep (+1 Day) & Full HP';
+    } else if (nearHomeStation === 'WARDROBE') {
+      nearPrompt = 'Almirah / Wardrobe · Press E to Change Outfit & Store Legal Gear';
     } else if (nearThanaDesk) {
       nearPrompt = this.hasGunLicense
         ? 'Thana No. 4 Duty Desk · Press E to talk to Duty Officer'
@@ -9683,6 +11144,15 @@ export class GameEngine {
       );
       if (nearCar) {
         nearPrompt = `Press F to enter ${nearCar.name}`;
+      } else if (
+        this.courtRig &&
+        Math.hypot(
+          this.playerX - this.courtRig.atriumCenter.x,
+          this.playerZ - this.courtRig.atriumCenter.z,
+        ) < 14.5
+      ) {
+        nearPrompt =
+          'District & Sessions Court (Spectator Gallery) · Observe Vakils, Clerks & Live Side-Hall Hearings';
       }
     }
 
@@ -9799,6 +11269,34 @@ export class GameEngine {
         }
       : null;
 
+    const activeJailPhase = this.jailState ? this.getJailSchedulePhase(this.gameMinutes) : 'WORK_SHIFT';
+    const activeJailMeta = this.getJailScheduleMeta(activeJailPhase);
+    const rivalDistanceEntries = (this.jailRig?.inmates ?? [])
+      .filter((inm) => inm.isRival)
+      .map((r) => {
+        const distMeters = Math.round(Math.hypot(r.x - this.playerX, r.z - this.playerZ));
+        const info: JailRivalInfo = {
+          id: r.id,
+          name: r.name,
+          hp: Math.ceil(r.hp),
+          maxHp: r.maxHp,
+          bribeCost: r.bribeCost,
+          bribed: r.bribed,
+          defeated: r.defeated,
+          chasing:
+            activeJailPhase !== 'NIGHT_LOCKUP' &&
+            !r.bribed &&
+            !r.defeated &&
+            distMeters <= 9.5,
+        };
+        return { info, distMeters };
+      });
+    const jailRivalsList: JailRivalInfo[] = rivalDistanceEntries.map((entry) => entry.info);
+    const nearJailRival =
+      rivalDistanceEntries
+        .filter((entry) => !entry.info.defeated && !entry.info.bribed && entry.distMeters <= 9)
+        .sort((a, b) => a.distMeters - b.distMeters)[0]?.info ?? null;
+
     const jailHud: JailHudState | null = this.jailState
       ? {
           active: true,
@@ -9818,6 +11316,15 @@ export class GameEngine {
           spottedByGuard: this.jailState.spottedByGuard,
           nearStation: this.jailState.nearStation,
           statusBanner: this.jailState.statusBanner,
+          schedulePhase: activeJailPhase,
+          scheduleTitle: activeJailMeta.title,
+          scheduleSub: activeJailMeta.sub,
+          workShiftDoneToday: this.jailState.workShiftDoneToday,
+          distractionActiveSec: Math.ceil(this.jailState.distractionTimer),
+          distractionCooldownSec: Math.ceil(this.jailState.distractionCooldown),
+          nearInmateDialogue: this.jailState.nearInmateDialogue,
+          nearRival: nearJailRival,
+          rivals: jailRivalsList,
           playerX: this.playerX,
           playerZ: this.playerZ,
           playerYaw: this.playerYaw,
@@ -9826,6 +11333,16 @@ export class GameEngine {
             z: g.z,
             yaw: g.yaw,
             alerted: this.jailState?.spottedByGuard ?? false,
+          })),
+          inmates: (this.jailRig?.inmates ?? []).map((inm) => ({
+            id: inm.id,
+            x: inm.x,
+            z: inm.z,
+            name: inm.name,
+            ally: inm.ally,
+            rival: inm.isRival,
+            defeated: inm.defeated,
+            bribed: inm.bribed,
           })),
         }
       : null;
@@ -9957,8 +11474,41 @@ export class GameEngine {
             ),
           }
         : null,
+      sleepCutscene: this.sleepCutscene
+        ? (() => {
+            const p = clamp(this.sleepCutscene.timer / Math.max(0.1, this.sleepCutscene.duration), 0, 1);
+            const phase: SleepCutsceneHud['phase'] =
+              p < 0.24 ? 'LYING_DOWN' : p < 0.8 ? 'NIGHT_REST' : 'MORNING_WAKE';
+            const stageLabel =
+              phase === 'LYING_DOWN'
+                ? 'Step 1 of 3 · Lying Down on Bed'
+                : phase === 'NIGHT_REST'
+                  ? 'Step 2 of 3 · Night Sweeping to Dawn'
+                  : 'Step 3 of 3 · Waking Up Refreshed';
+            return {
+              active: true,
+              location: this.sleepCutscene.location,
+              phase,
+              title: this.sleepCutscene.title,
+              subtitle: this.sleepCutscene.subtitle,
+              stageLabel,
+              progressPct: Math.round(p * 100),
+            };
+          })()
+        : null,
+      probationDaysLeft: this.probationDaysLeft,
       licenseRevokedPrompt: this.licenseRevokedPrompt ? { ...this.licenseRevokedPrompt } : null,
       jail: jailHud,
+      houseName: this.houseName,
+      needsHouseNaming: this.houseName === null,
+      homePos: { x: 30, z: 109.5 },
+      nearHomeStation,
+      playerOutfit: this.playerOutfit,
+      wardrobe: {
+        weapons: Array.from(this.wardrobeWeapons),
+        armor: this.wardrobeArmor,
+        medkits: this.wardrobeMedkits,
+      },
     });
   }
 
@@ -9980,6 +11530,8 @@ export class GameEngine {
     cancelAnimationFrame(this.frameId);
     clearTimeout(this.frameId);
     window.removeEventListener('resize', this.handleResize);
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
     window.removeEventListener('keydown', this.handleKeyDown);
     window.removeEventListener('keyup', this.handleKeyUp);
     window.removeEventListener('mousemove', this.handleMouseMove);

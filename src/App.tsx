@@ -6,6 +6,8 @@ import { CityMapModal } from './components/CityMapModal';
 import { CourtroomOverlay } from './components/CourtroomOverlay';
 import { CustodyCutsceneOverlay } from './components/CustodyCutsceneOverlay';
 import { GunShopModal } from './components/GunShopModal';
+import { HomeWardrobeModal } from './components/HomeWardrobeModal';
+import { HouseNamingModal } from './components/HouseNamingModal';
 import { HUD } from './components/HUD';
 import { InGamePhone } from './components/InGamePhone';
 import { JailHudOverlay } from './components/JailHudOverlay';
@@ -13,6 +15,7 @@ import { LicenseOfficeModal } from './components/LicenseOfficeModal';
 import { LicenseRevokedModal } from './components/LicenseRevokedModal';
 import { SettingsModal } from './components/SettingsModal';
 import { ShopConfirmModal } from './components/ShopConfirmModal';
+import { SleepCutsceneOverlay } from './components/SleepCutsceneOverlay';
 import { StreetStallModal } from './components/StreetStallModal';
 import { TitleScreen } from './components/TitleScreen';
 import { TouchControls } from './components/TouchControls';
@@ -148,8 +151,20 @@ const INITIAL_HUD: HudSnapshot = {
   },
   courtroom: null,
   custodyCutscene: null,
+  sleepCutscene: null,
+  probationDaysLeft: 0,
   licenseRevokedPrompt: null,
   jail: null,
+  houseName: null,
+  needsHouseNaming: false,
+  homePos: { x: 30, z: 109.5 },
+  nearHomeStation: null,
+  playerOutfit: 'default',
+  wardrobe: {
+    weapons: [],
+    armor: 0,
+    medkits: 0,
+  },
 };
 
 export default function App() {
@@ -166,6 +181,7 @@ export default function App() {
   const [activeStall, setActiveStall] = useState<StreetStallHudInfo | null>(null);
   const [activeAtm, setActiveAtm] = useState<AtmLandmarkHud | null>(null);
   const [licenseOfficeOpen, setLicenseOfficeOpen] = useState(false);
+  const [wardrobeOpen, setWardrobeOpen] = useState(false);
   const [bankModal, setBankModal] = useState<{ open: boolean; fromDebtBailout: boolean }>({
     open: false,
     fromDebtBailout: false,
@@ -228,6 +244,7 @@ export default function App() {
             setActiveStall(null);
             setActiveAtm(null);
             setLicenseOfficeOpen(false);
+            setWardrobeOpen(false);
             setBankModal({ open: false, fromDebtBailout: false });
           }
           if (nextMode !== 'PLAYING') {
@@ -293,8 +310,21 @@ export default function App() {
           setConfirmGunId(null);
           setActiveStall(null);
           setActiveAtm(null);
+          setWardrobeOpen(false);
           setBankModal({ open: false, fromDebtBailout: false });
           setLicenseOfficeOpen(true);
+          engineRef.current?.setMode('PAUSED');
+        },
+        onOpenWardrobe: () => {
+          setMapOpen(false);
+          setPhoneOpen(false);
+          setShopOpen(false);
+          setConfirmGunId(null);
+          setActiveStall(null);
+          setActiveAtm(null);
+          setLicenseOfficeOpen(false);
+          setBankModal({ open: false, fromDebtBailout: false });
+          setWardrobeOpen(true);
           engineRef.current?.setMode('PAUSED');
         },
         onToggleMap: handleToggleMap,
@@ -377,6 +407,7 @@ export default function App() {
     setActiveStall(null);
     setActiveAtm(null);
     setLicenseOfficeOpen(false);
+    setWardrobeOpen(false);
     setBankModal({ open: false, fromDebtBailout: false });
     setPhoneOpen(false);
     setMapOpen(false);
@@ -414,6 +445,11 @@ export default function App() {
 
   const handleCloseLicenseOffice = () => {
     setLicenseOfficeOpen(false);
+    engineRef.current?.setMode('PLAYING');
+  };
+
+  const handleCloseWardrobe = () => {
+    setWardrobeOpen(false);
     engineRef.current?.setMode('PLAYING');
   };
 
@@ -537,11 +573,20 @@ export default function App() {
           onClearWaypoint={() => engineRef.current?.clearWaypoint()}
           onOfferStreetBribe={() => engineRef.current?.offerStreetBribe()}
           onSurrender={() => engineRef.current?.triggerManualSurrender()}
+          onClickHomeStation={(station) => {
+            if (station === 'PUJA') engineRef.current?.prayAtHomePuja();
+            else if (station === 'BED') engineRef.current?.sleepAtHomeBed();
+            else if (station === 'WARDROBE') {
+              setWardrobeOpen(true);
+              engineRef.current?.setMode('PAUSED');
+            }
+          }}
         />
       )}
 
       {!engineError && showTouchHud && (
         <TouchControls
+          inJail={mode === 'JAIL'}
           inVehicle={mode === 'PLAYING' && hud.inVehicle}
           canUseMedkit={mode === 'PLAYING' && hud.medkits > 0 && hud.hp < hud.maxHp}
           micListening={mode === 'PLAYING' && hud.micState.active}
@@ -554,14 +599,18 @@ export default function App() {
           contextLabel={
             mode === 'JAIL'
               ? hud.jail?.nearStation === 'BUNK'
-                ? 'SKIP SAZA'
-                : hud.jail?.nearStation === 'WORKSHOP'
-                  ? 'JAIL WORK'
-                  : hud.jail?.nearStation === 'WARDEN'
-                    ? 'WARDEN'
-                    : hud.jail?.nearStation === 'ESCAPE_GATE'
-                      ? 'ESCAPE'
-                      : null
+                ? 'SLEEP'
+                : hud.jail?.nearStation === 'TOILET'
+                  ? 'TOILET'
+                  : hud.jail?.nearStation === 'WORKSHOP'
+                    ? 'JAIL WORK'
+                    : hud.jail?.nearStation === 'INMATE_ALLY'
+                      ? 'DISTRACT'
+                      : hud.jail?.nearStation === 'WARDEN'
+                        ? 'WARDEN'
+                        : hud.jail?.nearStation === 'ESCAPE_GATE'
+                          ? 'ESCAPE'
+                          : null
               : hud.policeInspection?.phase === 'ASKING'
                 ? 'LICENSE'
                 : hud.nearRescueVan
@@ -698,18 +747,26 @@ export default function App() {
         />
       )}
 
-      {!engineError && mode === 'PAUSED' && !shopOpen && !confirmGunId && !bankModal.open && !activeStall && !activeAtm && !licenseOfficeOpen && (
-        <SettingsModal
-          settings={settings}
-          onUpdateSettings={handleUpdateSettings}
-          onResume={handleResumeFromSettings}
-          onResetCity={() => engineRef.current?.resetCity()}
-          onResetFullGame={handleResetFullGame}
-          onApplyCheat={(code) =>
-            engineRef.current?.applyCheat(code) ?? { ok: false, message: 'Engine not ready' }
-          }
-        />
-      )}
+      {!engineError &&
+        mode === 'PAUSED' &&
+        !shopOpen &&
+        !confirmGunId &&
+        !bankModal.open &&
+        !activeStall &&
+        !activeAtm &&
+        !licenseOfficeOpen &&
+        !wardrobeOpen && (
+          <SettingsModal
+            settings={settings}
+            onUpdateSettings={handleUpdateSettings}
+            onResume={handleResumeFromSettings}
+            onResetCity={() => engineRef.current?.resetCity()}
+            onResetFullGame={handleResetFullGame}
+            onApplyCheat={(code) =>
+              engineRef.current?.applyCheat(code) ?? { ok: false, message: 'Engine not ready' }
+            }
+          />
+        )}
 
       {!engineError && shopOpen && (
         <GunShopModal
@@ -780,6 +837,7 @@ export default function App() {
           bank={hud.bank}
           timeOfDay={hud.timeOfDay}
           missionActive={hud.mission.active}
+          probationDaysLeft={hud.probationDaysLeft}
           onTransaction={(acc, act, amt) =>
             engineRef.current?.bankTransaction(acc, act, amt, false) ?? {
               ok: false,
@@ -844,6 +902,17 @@ export default function App() {
         />
       )}
 
+      {!engineError && mode === 'SLEEP' && hud.sleepCutscene && (
+        <SleepCutsceneOverlay
+          cutscene={hud.sleepCutscene}
+          houseName={hud.houseName}
+          dayCount={hud.timeOfDay.dayCount}
+          formattedTime={hud.timeOfDay.formattedTime}
+          probationDaysLeft={hud.probationDaysLeft}
+          onSkip={() => engineRef.current?.skipSleepCutscene()}
+        />
+      )}
+
       {!engineError && mode === 'COURTROOM' && hud.courtroom && (
         <CourtroomOverlay
           courtroom={hud.courtroom}
@@ -853,6 +922,34 @@ export default function App() {
           onSkipArguments={() => engineRef.current?.skipCourtroomArguments()}
           onPayBail={(source) => engineRef.current?.payCourtroomBail(source)}
           onEnterJail={() => engineRef.current?.enterCentralJailFromCourt()}
+          onRequestInterimBail={() => engineRef.current?.applySeniorAdvocateInterimBail()}
+        />
+      )}
+
+      {!engineError && wardrobeOpen && (
+        <HomeWardrobeModal
+          houseName={hud.houseName ?? 'Apna Ghar'}
+          currentOutfit={hud.playerOutfit}
+          ownedWeapons={hud.ownedWeapons}
+          wardrobeWeapons={hud.wardrobe.weapons}
+          playerArmor={hud.armor}
+          wardrobeArmor={hud.wardrobe.armor}
+          playerMedkits={hud.medkits}
+          wardrobeMedkits={hud.wardrobe.medkits}
+          onSelectOutfit={(outfit) => engineRef.current?.setPlayerOutfit(outfit)}
+          onStoreWeapon={(id) => engineRef.current?.storeWardrobeWeapon(id)}
+          onRetrieveWeapon={(id) => engineRef.current?.retrieveWardrobeWeapon(id)}
+          onStoreArmor={() => engineRef.current?.storeWardrobeArmor()}
+          onRetrieveArmor={() => engineRef.current?.retrieveWardrobeArmor()}
+          onStoreMedkit={() => engineRef.current?.storeWardrobeMedkit()}
+          onRetrieveMedkit={() => engineRef.current?.retrieveWardrobeMedkit()}
+          onClose={handleCloseWardrobe}
+        />
+      )}
+
+      {!engineError && mode === 'PLAYING' && hud.needsHouseNaming && (
+        <HouseNamingModal
+          onConfirmName={(houseName) => engineRef.current?.setHouseName(houseName)}
         />
       )}
 
@@ -871,13 +968,20 @@ export default function App() {
           jail={hud.jail}
           cash={hud.cash}
           bankSavings={hud.bank.savingsTotal}
+          firstPerson={hud.firstPerson}
           timeOfDay={hud.timeOfDay}
           toasts={toasts}
           worldLabels={hud.worldLabels}
           isTouchHud={showTouchHud}
+          onSleepNight={() => engineRef.current?.jailSleepNight()}
+          onUseToilet={() => engineRef.current?.jailUseToilet()}
           onSkipSentence={() => engineRef.current?.jailSkipSentence()}
           onPerformWork={() => engineRef.current?.jailPerformWork()}
+          onTriggerDistraction={() => engineRef.current?.jailTriggerInmateDistraction()}
           onBribeWarden={(source) => engineRef.current?.jailBribeWarden(source)}
+          onBribeRival={(rivalId) => engineRef.current?.jailBribeRival(rivalId)}
+          onAttack={() => engineRef.current?.triggerAttack()}
+          onToggleFirstPerson={() => engineRef.current?.toggleFirstPerson()}
           onStartPrisonBreak={() => engineRef.current?.jailStartPrisonBreak()}
           onOpenSettings={handleOpenSettings}
         />

@@ -15,9 +15,15 @@
     margin: 0;
     padding: 0;
     overflow: hidden;
+    overscroll-behavior: none;
     font-family: var(--font-sans);
     background-color: #0b0e14;
     color: #f1f5f9;
+  }
+
+  canvas {
+    display: block;
+    touch-action: none;
   }
 }
 

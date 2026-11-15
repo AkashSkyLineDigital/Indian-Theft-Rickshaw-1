@@ -21,6 +21,7 @@ interface CourtroomOverlayProps {
   onSkipArguments: () => void;
   onPayBail: (source: 'cash' | 'bank') => void;
   onEnterJail: () => void;
+  onRequestInterimBail: () => void;
 }
 
 const SPEAKER_PROFILES = [
@@ -61,6 +62,7 @@ export const CourtroomOverlay: React.FC<CourtroomOverlayProps> = ({
   onSkipArguments,
   onPayBail,
   onEnterJail,
+  onRequestInterimBail,
 }) => {
   const currentTurn =
     courtroom.dialogueTurns[
@@ -118,16 +120,22 @@ export const CourtroomOverlay: React.FC<CourtroomOverlayProps> = ({
               className={`px-2.5 py-1 border text-xs font-mono-num font-bold uppercase ${
                 courtroom.verdictKind === 'NO_BAIL'
                   ? 'bg-red-900/90 border-red-400 text-red-100'
-                  : courtroom.verdictKind === 'HIGH_BAIL'
-                    ? 'bg-amber-900/90 border-amber-400 text-amber-100'
-                    : 'bg-emerald-900/90 border-emerald-400 text-emerald-100'
+                  : courtroom.verdictKind === 'CONDITIONAL_INTERIM_BAIL'
+                    ? 'bg-orange-950/95 border-orange-400 text-orange-100'
+                    : courtroom.verdictKind === 'HIGH_BAIL'
+                      ? 'bg-amber-900/90 border-amber-400 text-amber-100'
+                      : 'bg-emerald-900/90 border-emerald-400 text-emerald-100'
               }`}
             >
               {courtroom.verdictKind === 'NO_BAIL'
-                ? 'Non-Bailable'
-                : courtroom.verdictKind === 'HIGH_BAIL'
-                  ? 'High Bail Case'
-                  : 'Bailable Offense'}
+                ? courtroom.hasFatalCharge
+                  ? 'Sec 103 BNS · Non-Bailable'
+                  : 'Non-Bailable'
+                : courtroom.verdictKind === 'CONDITIONAL_INTERIM_BAIL'
+                  ? 'Strict Interim Bail'
+                  : courtroom.verdictKind === 'HIGH_BAIL'
+                    ? 'High Bail Case'
+                    : 'Bailable Offense'}
             </span>
             {!courtroom.argumentsFinished && (
               <button
@@ -226,14 +234,21 @@ export const CourtroomOverlay: React.FC<CourtroomOverlayProps> = ({
 
         <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
           <span className="text-slate-400 font-mono-num uppercase">Charges:</span>
-          {courtroom.charges.map((ch, i) => (
-            <span
-              key={i}
-              className="px-2 py-0.5 bg-slate-900 border border-slate-700 text-slate-200 font-medium"
-            >
-              {ch}
-            </span>
-          ))}
+          {courtroom.charges.map((ch, i) => {
+            const isFatal = ch.includes('103 BNS');
+            return (
+              <span
+                key={i}
+                className={`px-2 py-0.5 border font-medium ${
+                  isFatal
+                    ? 'bg-red-950/95 border-red-500/80 text-red-100 font-bold'
+                    : 'bg-slate-900 border-slate-700 text-slate-200'
+                }`}
+              >
+                {ch}
+              </span>
+            );
+          })}
           {courtroom.confiscated.length > 0 && (
             <span className="px-2 py-0.5 bg-amber-950/90 border border-amber-500/60 text-amber-200 font-mono-num">
               Seized/Escrow: {courtroom.confiscated.join(', ')}
@@ -295,22 +310,32 @@ export const CourtroomOverlay: React.FC<CourtroomOverlayProps> = ({
         ) : (
           <div
             className={`bg-[#0B0E14]/96 border-2 shadow-2xl p-4 sm:p-5 flex flex-col gap-3 ${
-              courtroom.verdictKind === 'NO_BAIL' ? 'border-red-500' : 'border-emerald-400'
+              courtroom.verdictKind === 'NO_BAIL'
+                ? 'border-red-500'
+                : courtroom.verdictKind === 'CONDITIONAL_INTERIM_BAIL'
+                  ? 'border-orange-400'
+                  : 'border-emerald-400'
             }`}
           >
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Gavel
                   className={`w-5 h-5 ${
-                    courtroom.verdictKind === 'NO_BAIL' ? 'text-red-400' : 'text-amber-400'
+                    courtroom.verdictKind === 'NO_BAIL'
+                      ? 'text-red-400'
+                      : courtroom.verdictKind === 'CONDITIONAL_INTERIM_BAIL'
+                        ? 'text-orange-300'
+                        : 'text-amber-400'
                   }`}
                 />
                 <span className="font-display text-base sm:text-lg font-extrabold tracking-wide text-slate-100 uppercase">
                   {courtroom.verdictKind === 'NO_BAIL'
-                    ? 'Zamanat Kharij! Seedha Central Jail'
-                    : courtroom.verdictKind === 'HIGH_BAIL'
-                      ? 'Conditional High Bail Granted'
-                      : 'Bail Granted (Zamanat Manzoor)'}
+                    ? 'Zamanat Kharij! Judicial Custody (Central Jail)'
+                    : courtroom.verdictKind === 'CONDITIONAL_INTERIM_BAIL'
+                      ? 'Strict Conditional Interim Bail (Not Acquitted)'
+                      : courtroom.verdictKind === 'HIGH_BAIL'
+                        ? 'Conditional High Bail Granted'
+                        : 'Bail Granted (Zamanat Manzoor)'}
                 </span>
               </div>
               <span className="text-xs font-mono-num text-slate-300">
@@ -322,21 +347,48 @@ export const CourtroomOverlay: React.FC<CourtroomOverlayProps> = ({
               {courtroom.verdictHeadline}
             </p>
 
+            {courtroom.verdictKind === 'CONDITIONAL_INTERIM_BAIL' && (
+              <div className="px-3 py-2 bg-orange-950/75 border border-orange-500/70 text-[11px] font-mono-num text-orange-100">
+                STRICT BAIL CONDITIONS: All Weapons Confiscated · Arms License Revoked · 3-Day Court
+                Probation (Royal Bank Savings &amp; FD Interest Frozen)
+              </div>
+            )}
+
             {courtroom.verdictKind !== 'NO_BAIL' ? (
               <>
-                <div className="grid grid-cols-3 gap-2 bg-[#121826] border border-slate-800 p-3 text-xs font-mono-num">
+                <div
+                  className={`grid gap-2 bg-[#121826] border border-slate-800 p-3 text-xs font-mono-num ${
+                    courtroom.victimCompensation > 0 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'
+                  }`}
+                >
                   <div>
-                    <div className="text-[10px] text-slate-400 uppercase">Bail Bond</div>
+                    <div className="text-[10px] text-slate-400 uppercase">
+                      {courtroom.verdictKind === 'CONDITIONAL_INTERIM_BAIL'
+                        ? 'Heavy Bail Bond'
+                        : 'Bail Bond'}
+                    </div>
                     <div className="text-sm font-bold text-amber-300">
                       {formatRs(courtroom.bailAmount)}
                     </div>
                   </div>
                   <div>
-                    <div className="text-[10px] text-slate-400 uppercase">Vakil Fee</div>
+                    <div className="text-[10px] text-slate-400 uppercase">
+                      {courtroom.verdictKind === 'CONDITIONAL_INTERIM_BAIL'
+                        ? 'Senior Advocate'
+                        : 'Vakil Fee'}
+                    </div>
                     <div className="text-sm font-bold text-purple-300">
                       {formatRs(courtroom.lawyerFee)}
                     </div>
                   </div>
+                  {courtroom.victimCompensation > 0 && (
+                    <div>
+                      <div className="text-[10px] text-slate-400 uppercase">Victim Relief Fund</div>
+                      <div className="text-sm font-bold text-orange-300">
+                        {formatRs(courtroom.victimCompensation)}
+                      </div>
+                    </div>
+                  )}
                   <div>
                     <div className="text-[10px] text-slate-400 uppercase">Total Payable</div>
                     <div className="text-sm font-bold text-emerald-300">
@@ -395,18 +447,53 @@ export const CourtroomOverlay: React.FC<CourtroomOverlayProps> = ({
                 </div>
               </>
             ) : (
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
-                <div className="text-xs font-mono-num text-red-300">
-                  4–5★ Non-Bailable Custody · Police Van will escort you to Bharat Central Jail.
+              <div className="flex flex-col gap-3 pt-1">
+                {courtroom.interimBailEligible &&
+                  !courtroom.interimBailApplied &&
+                  courtroom.interimBailBreakdown && (
+                    <div className="bg-[#121826] border border-amber-500/60 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex flex-col gap-0.5 text-xs">
+                        <span className="font-display font-bold text-amber-300 uppercase">
+                          Path B: Senior Advocate Self-Defense Interim Bail Plea
+                        </span>
+                        <span className="text-[11px] font-mono-num text-slate-300">
+                          Bond {formatRs(courtroom.interimBailBreakdown.heavyBond)} + Senior Vakil{' '}
+                          {formatRs(courtroom.interimBailBreakdown.seniorAdvocateFee)} + Relief{' '}
+                          {formatRs(courtroom.interimBailBreakdown.victimCompensation)} ={' '}
+                          <strong className="text-amber-300">
+                            {formatRs(courtroom.interimBailBreakdown.total)}
+                          </strong>
+                        </span>
+                        <span className="text-[10px] text-orange-300">
+                          Penalty: Weapons &amp; Arms License revoked + 3-Day Bank Interest Freeze
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={onRequestInterimBail}
+                        className="shrink-0 flex items-center justify-center gap-1.5 px-3.5 py-2.5 bg-amber-500 hover:bg-amber-400 text-[#0B0E14] text-xs font-display font-extrabold uppercase cursor-pointer"
+                      >
+                        <Briefcase className="w-4 h-4" />
+                        <span>Hire Senior Advocate</span>
+                      </button>
+                    </div>
+                  )}
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                  <div className="text-xs font-mono-num text-red-300">
+                    {courtroom.hasFatalCharge
+                      ? `Section 103 BNS (${courtroom.fatalitiesCount} Fatalit${courtroom.fatalitiesCount > 1 ? 'ies' : 'y'}) · Remanded to Central Jail Custody.`
+                      : '4–5★ Non-Bailable Custody · Police Van will escort you to Bharat Central Jail.'}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onEnterJail}
+                    className="flex items-center justify-center gap-2 px-5 py-2.5 bg-red-600 hover:bg-red-500 text-white text-xs font-display font-extrabold uppercase tracking-wider cursor-pointer"
+                  >
+                    <ShieldAlert className="w-4 h-4" />
+                    <span>Board Jail Van ({courtroom.jailDays} Din)</span>
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={onEnterJail}
-                  className="flex items-center justify-center gap-2 px-5 py-2.5 bg-red-600 hover:bg-red-500 text-white text-xs font-display font-extrabold uppercase tracking-wider cursor-pointer"
-                >
-                  <ShieldAlert className="w-4 h-4" />
-                  <span>Board Jail Van ({courtroom.jailDays} Din)</span>
-                </button>
               </div>
             )}
           </div>

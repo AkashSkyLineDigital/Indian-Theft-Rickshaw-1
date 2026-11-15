@@ -1,6 +1,38 @@
-export type GameMode = 'TITLE' | 'PLAYING' | 'PAUSED' | 'WASTED' | 'BUSTED' | 'CUSTODY' | 'COURTROOM' | 'JAIL';
+export type GameMode = 'TITLE' | 'PLAYING' | 'PAUSED' | 'WASTED' | 'BUSTED' | 'CUSTODY' | 'COURTROOM' | 'JAIL' | 'SLEEP';
 
 export type WeaponId = 'fists' | 'pistol' | 'smg' | 'shotgun' | 'rifle';
+
+export type PlayerOutfitId = 'default' | 'kurta' | 'jacket';
+
+export const PLAYER_OUTFITS: Record<
+  PlayerOutfitId,
+  { id: PlayerOutfitId; label: string; subtitle: string; shirtHex: number; pantsHex: number; swatch: string }
+> = {
+  default: {
+    id: 'default',
+    label: 'Olive Tactical',
+    subtitle: 'Signature street cargo jacket & dark denim',
+    shirtHex: 0x2f4f3e,
+    pantsHex: 0x1e293b,
+    swatch: '#2f4f3e',
+  },
+  kurta: {
+    id: 'kurta',
+    label: 'Festive Kurta-Pajama',
+    subtitle: 'Traditional cream-saffron cotton kurta & churidar',
+    shirtHex: 0xfef3c7,
+    pantsHex: 0xf8fafc,
+    swatch: '#f59e0b',
+  },
+  jacket: {
+    id: 'jacket',
+    label: 'Crimson Street Jacket',
+    subtitle: 'Bold maroon bomber jacket & charcoal trousers',
+    shirtHex: 0x7f1d1d,
+    pantsHex: 0x111827,
+    swatch: '#b91c1c',
+  },
+};
 
 export type ScopeType = 'none' | 'iron' | 'red_dot' | 'spread' | 'holo_2x';
 
@@ -409,8 +441,14 @@ export interface SavedGameState {
   hasDrivingLicense?: boolean;
   hasHelmet?: boolean;
   helmetOn?: boolean;
+  houseName?: string;
+  playerOutfit?: PlayerOutfitId;
+  wardrobeWeapons?: WeaponId[];
+  wardrobeArmor?: number;
+  wardrobeMedkits?: number;
   gameMinutes?: number;
   dayCount?: number;
+  probationDaysLeft?: number;
   bank?: {
     savingsPrincipal: number;
     savingsInterest: number;
@@ -446,6 +484,7 @@ export interface MinimapBlip {
     | 'golgappa'
     | 'temple'
     | 'mosque'
+    | 'home'
     | 'mission_enemy'
     | 'rescue_van'
     | 'chopper'
@@ -475,7 +514,18 @@ export interface WorldLabelHud {
   isDealer?: boolean;
   isBanker?: boolean;
   isLicenseOfficer?: boolean;
-  jailStation?: 'BUNK' | 'WORKSHOP' | 'WARDEN' | 'ESCAPE_GATE';
+  isBuildingSign?: boolean;
+  signAccent?: string;
+  homeStation?: 'PUJA' | 'BED' | 'WARDROBE';
+  jailStation?:
+    | 'BUNK'
+    | 'TOILET'
+    | 'WORKSHOP'
+    | 'WARDEN'
+    | 'ESCAPE_GATE'
+    | 'INMATE_ALLY'
+    | 'INMATE_RIVAL';
+  rivalId?: string;
 }
 
 export interface WitnessAlertHud {
@@ -590,7 +640,7 @@ export const CITY_LOCATIONS: CityLocationPreset[] = [
   { id: 'shanti-vihar', label: 'Shanti Vihar Colony', category: 'service', x: 210, z: -16, badge: 'R' },
 ];
 
-export type CourtroomVerdictKind = 'BAILABLE' | 'HIGH_BAIL' | 'NO_BAIL';
+export type CourtroomVerdictKind = 'BAILABLE' | 'HIGH_BAIL' | 'NO_BAIL' | 'CONDITIONAL_INTERIM_BAIL';
 
 export interface CourtroomDialogueTurn {
   speakerRole: 'judge' | 'inspector' | 'lawyer';
@@ -605,12 +655,23 @@ export interface CourtroomState {
   arrestReason: string;
   charges: string[];
   confiscated: string[];
+  hasFatalCharge: boolean;
+  fatalitiesCount: number;
   verdictKind: CourtroomVerdictKind;
   verdictHeadline: string;
   bailAmount: number;
   lawyerFee: number;
+  victimCompensation: number;
   totalDue: number;
   jailDays: number;
+  interimBailEligible: boolean;
+  interimBailApplied: boolean;
+  interimBailBreakdown?: {
+    heavyBond: number;
+    seniorAdvocateFee: number;
+    victimCompensation: number;
+    total: number;
+  };
   dialogueIndex: number;
   dialogueTurns: CourtroomDialogueTurn[];
   argumentsFinished: boolean;
@@ -632,6 +693,18 @@ export interface CustodyCutsceneHud {
   progressPct: number;
 }
 
+export type SleepCutsceneLocation = 'HOME_BED' | 'JAIL_BUNK';
+
+export interface SleepCutsceneHud {
+  active: boolean;
+  location: SleepCutsceneLocation;
+  phase: 'LYING_DOWN' | 'NIGHT_REST' | 'MORNING_WAKE';
+  title: string;
+  subtitle: string;
+  stageLabel: string;
+  progressPct: number;
+}
+
 export interface LicenseRevokedPromptHud {
   active: boolean;
   starsAtArrest: number;
@@ -639,11 +712,35 @@ export interface LicenseRevokedPromptHud {
   standardFee: number;
 }
 
+export type JailSchedulePhase = 'WORK_SHIFT' | 'FREE_YARD' | 'NIGHT_LOCKUP';
+
 export interface JailGuardBlip {
   x: number;
   z: number;
   yaw: number;
   alerted: boolean;
+}
+
+export interface JailInmateBlip {
+  id: string;
+  x: number;
+  z: number;
+  name: string;
+  ally: boolean;
+  rival?: boolean;
+  defeated?: boolean;
+  bribed?: boolean;
+}
+
+export interface JailRivalInfo {
+  id: string;
+  name: string;
+  hp: number;
+  maxHp: number;
+  bribeCost: number;
+  bribed: boolean;
+  defeated: boolean;
+  chasing: boolean;
 }
 
 export interface JailHudState {
@@ -659,12 +756,30 @@ export interface JailHudState {
   activeTaskKind: 'NONE' | 'WORK' | 'ESCAPE';
   activeTaskPct: number;
   spottedByGuard: boolean;
-  nearStation: 'BUNK' | 'WORKSHOP' | 'WARDEN' | 'ESCAPE_GATE' | null;
+  nearStation:
+    | 'BUNK'
+    | 'TOILET'
+    | 'WORKSHOP'
+    | 'WARDEN'
+    | 'ESCAPE_GATE'
+    | 'INMATE_ALLY'
+    | 'INMATE_RIVAL'
+    | null;
   statusBanner: string | null;
+  schedulePhase: JailSchedulePhase;
+  scheduleTitle: string;
+  scheduleSub: string;
+  workShiftDoneToday: boolean;
+  distractionActiveSec: number;
+  distractionCooldownSec: number;
+  nearInmateDialogue: { name: string; text: string } | null;
+  nearRival: JailRivalInfo | null;
+  rivals: JailRivalInfo[];
   playerX: number;
   playerZ: number;
   playerYaw: number;
   guards: JailGuardBlip[];
+  inmates: JailInmateBlip[];
 }
 
 export interface HudSnapshot {
@@ -732,6 +847,18 @@ export interface HudSnapshot {
   bank: BankAccountHudState;
   courtroom: CourtroomState | null;
   custodyCutscene: CustodyCutsceneHud | null;
+  sleepCutscene: SleepCutsceneHud | null;
+  probationDaysLeft: number;
   licenseRevokedPrompt: LicenseRevokedPromptHud | null;
   jail: JailHudState | null;
+  houseName: string | null;
+  needsHouseNaming: boolean;
+  homePos: { x: number; z: number };
+  nearHomeStation: 'PUJA' | 'BED' | 'WARDROBE' | null;
+  playerOutfit: PlayerOutfitId;
+  wardrobe: {
+    weapons: WeaponId[];
+    armor: number;
+    medkits: number;
+  };
 }

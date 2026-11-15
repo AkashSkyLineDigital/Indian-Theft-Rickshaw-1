@@ -64,6 +64,7 @@ interface HUDProps {
   onClearWaypoint: () => void;
   onOfferStreetBribe: () => void;
   onSurrender: () => void;
+  onClickHomeStation?: (station: 'PUJA' | 'BED' | 'WARDROBE') => void;
 }
 
 function formatTimer(sec: number): string {
@@ -98,6 +99,7 @@ export const HUD: React.FC<HUDProps> = ({
   onClearWaypoint,
   onOfferStreetBribe,
   onSurrender,
+  onClickHomeStation,
 }) => {
   const activeSpec = WEAPONS[hud.activeWeapon];
   const hpPct = Math.max(0, Math.min(100, (hud.hp / hud.maxHp) * 100));
@@ -231,45 +233,90 @@ export const HUD: React.FC<HUDProps> = ({
         </>
       )}
 
-      {/* World-projected Gun Shop, DM License Office & Royal Bank Of India Tags */}
+      {/* World-projected Building Signs, Home Stations, Gun Shop, DM License Office & Royal Bank Tags */}
       {!inCutscene &&
-        hud.worldLabels.map((lbl) => (
-          <button
-            key={lbl.id}
-            type="button"
-            onClick={() => {
-              if (lbl.isBanker) onClickBankerLabel();
-              else if (lbl.isLicenseOfficer) onClickLicenseOfficerLabel();
-              else if (lbl.isDealer) onClickDealerLabel();
-              else if (lbl.weaponId) onClickDisplayLabel(lbl.weaponId);
-            }}
-            style={{
-              transform: `translate3d(${lbl.screenX}px, ${lbl.screenY}px, 0) translate(-50%, -100%)`,
-            }}
-            className={`absolute top-0 left-0 pointer-events-auto px-2.5 py-1 bg-[#0B0E14]/92 hover:bg-[#171E2C] border text-center shadow-lg cursor-pointer transition-colors ${
-              lbl.isBanker
-                ? 'border-sky-400/80'
-                : lbl.isLicenseOfficer
-                  ? 'border-purple-400/85'
-                  : 'border-amber-500/75'
-            }`}
-          >
-            <div className="text-[11px] font-display font-bold text-slate-100 leading-tight whitespace-nowrap">
-              {lbl.title}
-            </div>
-            <div
-              className={`text-[10px] font-mono-num whitespace-nowrap ${
-                lbl.isBanker
-                  ? 'text-sky-300'
-                  : lbl.isLicenseOfficer
-                    ? 'text-purple-300'
-                    : 'text-amber-400'
+        hud.worldLabels.map((lbl) => {
+          if (lbl.isBuildingSign) {
+            return (
+              <div
+                key={lbl.id}
+                style={{
+                  transform: `translate3d(${lbl.screenX}px, ${lbl.screenY}px, 0) translate(-50%, -100%)`,
+                  borderColor: lbl.signAccent ?? '#f59e0b',
+                }}
+                className="absolute top-0 left-0 pointer-events-none px-2.5 py-1 bg-[#0B0E14]/94 border-l-4 border border-slate-700/90 shadow-lg flex items-center gap-1.5"
+              >
+                <span
+                  className="w-2 h-2 shrink-0"
+                  style={{ backgroundColor: lbl.signAccent ?? '#f59e0b' }}
+                />
+                <div className="flex flex-col leading-tight">
+                  <span className="text-[11px] font-display font-bold tracking-wide text-slate-100 whitespace-nowrap">
+                    {lbl.title}
+                  </span>
+                  {lbl.subtitle && (
+                    <span className="text-[9px] font-mono-num text-amber-300 whitespace-nowrap">
+                      {lbl.subtitle}
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <button
+              key={lbl.id}
+              type="button"
+              onClick={(e) => {
+                e.currentTarget.blur();
+                if (lbl.homeStation && onClickHomeStation) {
+                  onClickHomeStation(lbl.homeStation);
+                } else if (lbl.isBanker) onClickBankerLabel();
+                else if (lbl.isLicenseOfficer) onClickLicenseOfficerLabel();
+                else if (lbl.isDealer) onClickDealerLabel();
+                else if (lbl.weaponId) onClickDisplayLabel(lbl.weaponId);
+              }}
+              style={{
+                transform: `translate3d(${lbl.screenX}px, ${lbl.screenY}px, 0) translate(-50%, -100%)`,
+              }}
+              className={`absolute top-0 left-0 pointer-events-auto px-2.5 py-1 bg-[#0B0E14]/92 hover:bg-[#171E2C] border text-center shadow-lg cursor-pointer transition-colors ${
+                lbl.homeStation === 'PUJA'
+                  ? 'border-amber-400/90'
+                  : lbl.homeStation === 'BED'
+                    ? 'border-emerald-400/85'
+                    : lbl.homeStation === 'WARDROBE'
+                      ? 'border-sky-400/85'
+                      : lbl.isBanker
+                        ? 'border-sky-400/80'
+                        : lbl.isLicenseOfficer
+                          ? 'border-purple-400/85'
+                          : 'border-amber-500/75'
               }`}
             >
-              {lbl.subtitle}
-            </div>
-          </button>
-        ))}
+              <div className="text-[11px] font-display font-bold text-slate-100 leading-tight whitespace-nowrap">
+                {lbl.title}
+              </div>
+              <div
+                className={`text-[10px] font-mono-num whitespace-nowrap ${
+                  lbl.homeStation === 'PUJA'
+                    ? 'text-amber-300'
+                    : lbl.homeStation === 'BED'
+                      ? 'text-emerald-300'
+                      : lbl.homeStation === 'WARDROBE'
+                        ? 'text-sky-300'
+                        : lbl.isBanker
+                          ? 'text-sky-300'
+                          : lbl.isLicenseOfficer
+                            ? 'text-purple-300'
+                            : 'text-amber-400'
+                }`}
+              >
+                {lbl.subtitle}
+              </div>
+            </button>
+          );
+        })}
 
       {/* World-projected Witness Phone Call Alert */}
       {!inCutscene &&
@@ -492,7 +539,10 @@ export const HUD: React.FC<HUDProps> = ({
             {!hud.inVehicle && (
               <button
                 type="button"
-                onClick={onToggleFirstPerson}
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  onToggleFirstPerson();
+                }}
                 className={`flex items-center gap-1.5 px-2.5 py-2 border text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
                   hud.firstPerson
                     ? 'bg-sky-600 hover:bg-sky-500 border-sky-400 text-white'
@@ -506,7 +556,10 @@ export const HUD: React.FC<HUDProps> = ({
             {canFirearm && (
               <button
                 type="button"
-                onClick={onToggleAds}
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  onToggleAds();
+                }}
                 className={`flex items-center gap-1.5 px-2.5 py-2 border text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
                   hud.adsActive
                     ? 'bg-amber-500 hover:bg-amber-400 border-amber-300 text-[#0B0E14]'
@@ -520,7 +573,10 @@ export const HUD: React.FC<HUDProps> = ({
             {(hud.hasHelmet || hud.currentVehicleKind === 'bike') && (
               <button
                 type="button"
-                onClick={onToggleHelmet}
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  onToggleHelmet();
+                }}
                 className={`flex items-center gap-1.5 px-2.5 py-2 border text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
                   hud.helmetOn
                     ? 'bg-emerald-600 hover:bg-emerald-500 border-emerald-400 text-white'
@@ -533,7 +589,10 @@ export const HUD: React.FC<HUDProps> = ({
             )}
             <button
               type="button"
-              onClick={onStartMicReply}
+              onClick={(e) => {
+                e.currentTarget.blur();
+                onStartMicReply();
+              }}
               className={`flex items-center gap-1.5 px-2.5 py-2 border text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
                 hud.micState.active
                   ? 'bg-red-600 hover:bg-red-500 border-red-400 text-white'
@@ -545,7 +604,10 @@ export const HUD: React.FC<HUDProps> = ({
             </button>
             <button
               type="button"
-              onClick={onOpenMap}
+              onClick={(e) => {
+                e.currentTarget.blur();
+                onOpenMap();
+              }}
               className="flex items-center gap-1.5 px-2.5 py-2 bg-[#141A26]/95 hover:bg-[#1C2434] border border-sky-500/40 text-sky-300 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer"
             >
               <MapIcon className="w-3.5 h-3.5" />
@@ -553,7 +615,10 @@ export const HUD: React.FC<HUDProps> = ({
             </button>
             <button
               type="button"
-              onClick={onOpenWheel}
+              onClick={(e) => {
+                e.currentTarget.blur();
+                onOpenWheel();
+              }}
               className="flex items-center gap-1.5 px-2.5 py-2 bg-[#141A26]/95 hover:bg-[#1C2434] border border-slate-600/70 text-slate-100 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer"
             >
               <Disc className="w-3.5 h-3.5 text-amber-400" />
@@ -561,7 +626,10 @@ export const HUD: React.FC<HUDProps> = ({
             </button>
             <button
               type="button"
-              onClick={onOpenPhone}
+              onClick={(e) => {
+                e.currentTarget.blur();
+                onOpenPhone();
+              }}
               className="flex items-center gap-1.5 px-2.5 py-2 bg-[#141A26]/95 hover:bg-[#1C2434] border border-sky-500/40 text-sky-300 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer"
             >
               <Smartphone className="w-3.5 h-3.5" />
@@ -569,7 +637,10 @@ export const HUD: React.FC<HUDProps> = ({
             </button>
             <button
               type="button"
-              onClick={onOpenShop}
+              onClick={(e) => {
+                e.currentTarget.blur();
+                onOpenShop();
+              }}
               className="flex items-center gap-1.5 px-2.5 py-2 bg-[#141A26]/95 hover:bg-[#1C2434] border border-amber-500/40 text-amber-400 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer"
             >
               <ShoppingBag className="w-3.5 h-3.5" />
@@ -577,7 +648,10 @@ export const HUD: React.FC<HUDProps> = ({
             </button>
             <button
               type="button"
-              onClick={onOpenSettings}
+              onClick={(e) => {
+                e.currentTarget.blur();
+                onOpenSettings();
+              }}
               className="flex items-center gap-1.5 px-2.5 py-2 bg-[#141A26]/95 hover:bg-[#1C2434] border border-slate-600/70 text-slate-100 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer"
             >
               <Settings className="w-3.5 h-3.5" />
@@ -627,6 +701,13 @@ export const HUD: React.FC<HUDProps> = ({
                 <span className="font-bold">
                   {formatRsExact(hud.bank.savingsTotal + hud.bank.fdTotal)}
                 </span>
+              </div>
+            )}
+
+            {hud.probationDaysLeft > 0 && (
+              <div className="flex items-center justify-between text-[10px] font-mono-num px-2 py-1 bg-orange-950/75 border border-orange-500/60 text-orange-200">
+                <span>PROBATION · INT FROZEN</span>
+                <span className="font-bold">{hud.probationDaysLeft}D LEFT</span>
               </div>
             )}
 
@@ -981,7 +1062,10 @@ export const HUD: React.FC<HUDProps> = ({
           {hud.nearPrompt && !hud.policeInspection && (
             <button
               type="button"
-              onClick={onContextInteract}
+              onClick={(e) => {
+                e.currentTarget.blur();
+                onContextInteract();
+              }}
               className="pointer-events-auto px-4 py-2 bg-[#141A26]/95 hover:bg-[#1E2638] border border-amber-500/70 text-xs font-semibold text-amber-300 shadow-lg text-center cursor-pointer transition-colors"
             >
               {hud.nearPrompt}

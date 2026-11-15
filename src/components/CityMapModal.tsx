@@ -85,9 +85,11 @@ export const CityMapModal: React.FC<CityMapModalProps> = ({
                             ? '#241736'
                             : bx === -150 && bz === 150
                               ? '#29161a'
-                              : isColony
-                                ? '#161e2b'
-                                : '#1b2230';
+                              : bx === 30 && bz === 90
+                                ? '#2e2310'
+                                : isColony
+                                  ? '#161e2b'
+                                  : '#1b2230';
         ctx.strokeStyle = '#2d3748';
         ctx.lineWidth = 1;
         ctx.fillRect(cx - bw / 2, cy - bw / 2, bw, bw);
@@ -257,6 +259,17 @@ export const CityMapModal: React.FC<CityMapModalProps> = ({
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText('☪', bx, by + 0.5);
+      } else if (b.type === 'home') {
+        ctx.fillStyle = '#f59e0b';
+        ctx.strokeStyle = '#fef3c7';
+        ctx.lineWidth = 1.4;
+        ctx.fillRect(bx - 8, by - 8, 16, 16);
+        ctx.strokeRect(bx - 8, by - 8, 16, 16);
+        ctx.fillStyle = '#0b0e14';
+        ctx.font = 'bold 10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('H', bx, by + 0.5);
       } else if (b.type === 'dm_office') {
         ctx.fillStyle = '#7c3aed';
         ctx.fillRect(bx - 7, by - 7, 14, 14);
@@ -386,7 +399,16 @@ export const CityMapModal: React.FC<CityMapModalProps> = ({
     const worldZ = Math.max(-330, Math.min(330, Math.round((clickY - half) / scale)));
 
     // Snap label to closest known preset if clicked nearby (~20m), otherwise Custom Pin
-    const nearbyPreset = CITY_LOCATIONS.find(
+    const homeDest = {
+      id: 'home',
+      label: hud.houseName ? `${hud.houseName} (My Home)` : 'Apna Ghar (My Home)',
+      category: 'sacred' as const,
+      x: hud.homePos?.x ?? 30,
+      z: hud.homePos?.z ?? 109.5,
+      badge: 'H',
+    };
+    const allDestinations = [homeDest, ...CITY_LOCATIONS];
+    const nearbyPreset = allDestinations.find(
       (loc) => Math.hypot(loc.x - worldX, loc.z - worldZ) < 20,
     );
     if (nearbyPreset) {
@@ -395,6 +417,18 @@ export const CityMapModal: React.FC<CityMapModalProps> = ({
       onSetWaypoint(worldX, worldZ, `Pin (${worldX}, ${worldZ})`);
     }
   };
+
+  const destinations = [
+    {
+      id: 'home',
+      label: hud.houseName ? `${hud.houseName} (My Home)` : 'Apna Ghar (My Home)',
+      category: 'sacred' as const,
+      x: hud.homePos?.x ?? 30,
+      z: hud.homePos?.z ?? 109.5,
+      badge: 'H',
+    },
+    ...CITY_LOCATIONS,
+  ];
 
   return (
     <div className="fixed inset-0 z-30 flex items-center justify-center bg-[#070A10]/88 p-4 pointer-events-auto">
@@ -480,7 +514,7 @@ export const CityMapModal: React.FC<CityMapModalProps> = ({
                 <MapPin className="w-3.5 h-3.5 text-sky-400" /> CITY DESTINATIONS
               </div>
               <div className="flex flex-col gap-1.5 max-h-[340px] overflow-y-auto pr-1">
-                {CITY_LOCATIONS.map((loc) => {
+                {destinations.map((loc) => {
                   const selected = hud.waypoint?.label === loc.label;
                   const dist = Math.round(Math.hypot(loc.x - hud.playerX, loc.z - hud.playerZ));
                   return (
@@ -497,17 +531,19 @@ export const CityMapModal: React.FC<CityMapModalProps> = ({
                       <div className="flex items-center gap-2 min-w-0">
                         <span
                           className={`w-5 h-5 shrink-0 flex items-center justify-center text-[10px] font-bold ${
-                            loc.id === 'dm-office' || loc.id === 'district-court'
-                              ? 'bg-purple-600 text-white'
-                              : loc.id === 'central-jail'
-                                ? 'bg-red-700 text-white'
-                                : loc.category === 'sacred'
-                                  ? loc.id === 'noor-masjid'
-                                    ? 'bg-emerald-600 text-white'
-                                    : 'bg-orange-500 text-white'
-                                  : loc.category === 'service'
-                                    ? 'bg-sky-500 text-[#0B0E14]'
-                                    : 'bg-amber-500 text-[#0B0E14]'
+                            loc.id === 'home'
+                              ? 'bg-amber-400 text-[#0B0E14]'
+                              : loc.id === 'dm-office' || loc.id === 'district-court'
+                                ? 'bg-purple-600 text-white'
+                                : loc.id === 'central-jail'
+                                  ? 'bg-red-700 text-white'
+                                  : loc.category === 'sacred'
+                                    ? loc.id === 'noor-masjid'
+                                      ? 'bg-emerald-600 text-white'
+                                      : 'bg-orange-500 text-white'
+                                    : loc.category === 'service'
+                                      ? 'bg-sky-500 text-[#0B0E14]'
+                                      : 'bg-amber-500 text-[#0B0E14]'
                           }`}
                         >
                           {loc.badge}

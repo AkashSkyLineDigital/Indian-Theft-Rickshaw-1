@@ -27,6 +27,11 @@ export interface HumanoidRig {
   head: THREE.Group;
   phoneProp: THREE.Mesh;
   helmetMesh: THREE.Group;
+  shirtMat?: THREE.MeshStandardMaterial;
+  pantsMat?: THREE.MeshStandardMaterial;
+  beltMesh?: THREE.Mesh;
+  kurtaHem?: THREE.Mesh;
+  kurtaPlacket?: THREE.Mesh;
 }
 
 export interface VehicleRig {
@@ -402,22 +407,26 @@ export function createHumanoidModel(opts: {
 
   const outfit = opts.outfitStyle ?? 'casual';
 
+  let beltMesh: THREE.Mesh | undefined;
+  let kurtaHem: THREE.Mesh | undefined;
+  let kurtaPlacket: THREE.Mesh | undefined;
+
   if (isTraditional) {
     // Traditional lower kurta skirt flare instead of tactical belt
-    const kurtaHem = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.26, 0.32), shirtMat);
+    kurtaHem = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.26, 0.32), shirtMat);
     kurtaHem.position.y = 0.84;
     kurtaHem.castShadow = true;
     root.add(kurtaHem);
   } else if (outfit === 'kurta') {
-    const kurtaHem = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.3, 0.32), shirtMat);
+    kurtaHem = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.3, 0.32), shirtMat);
     kurtaHem.position.y = 0.82;
     kurtaHem.castShadow = true;
-    const placket = new THREE.Mesh(
+    kurtaPlacket = new THREE.Mesh(
       new THREE.BoxGeometry(0.08, 0.32, 0.03),
       new THREE.MeshStandardMaterial({ color: 0xfef3c7, roughness: 0.65 }),
     );
-    placket.position.set(0, 1.32, -0.15);
-    root.add(kurtaHem, placket);
+    kurtaPlacket.position.set(0, 1.32, -0.15);
+    root.add(kurtaHem, kurtaPlacket);
   } else if (outfit === 'saree') {
     // Draped saree pallu across shoulder & vibrant golden zari border hem
     const pallu = new THREE.Mesh(
@@ -448,12 +457,25 @@ export function createHumanoidModel(opts: {
   } else {
     // Leather police belt for khaki beat cops or standard belt
     const beltColor = isKhakiBeatCop ? 0x3b1f0e : 0x16181d;
-    const belt = new THREE.Mesh(
+    beltMesh = new THREE.Mesh(
       new THREE.BoxGeometry(0.56, 0.09, 0.32),
       new THREE.MeshStandardMaterial({ color: beltColor, roughness: 0.38, metalness: 0.25 }),
     );
-    belt.position.y = 0.88;
-    root.add(belt);
+    beltMesh.position.y = 0.88;
+    root.add(beltMesh);
+    if (opts.isPlayer) {
+      kurtaHem = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.3, 0.32), shirtMat);
+      kurtaHem.position.y = 0.82;
+      kurtaHem.castShadow = true;
+      kurtaHem.visible = false;
+      kurtaPlacket = new THREE.Mesh(
+        new THREE.BoxGeometry(0.08, 0.32, 0.03),
+        new THREE.MeshStandardMaterial({ color: 0xfef3c7, roughness: 0.65 }),
+      );
+      kurtaPlacket.position.set(0, 1.32, -0.15);
+      kurtaPlacket.visible = false;
+      root.add(kurtaHem, kurtaPlacket);
+    }
     if (isKhakiBeatCop) {
       // Classic Indian Police brown Sam Browne cross-strap + brass buckle
       const crossStrap = new THREE.Mesh(
@@ -794,7 +816,23 @@ export function createHumanoidModel(opts: {
 
   root.add(leftArm, rightArm);
 
-  return { root, leftLeg, rightLeg, leftArm, rightArm, weaponMount, lathiProp, head, phoneProp, helmetMesh };
+  return {
+    root,
+    leftLeg,
+    rightLeg,
+    leftArm,
+    rightArm,
+    weaponMount,
+    lathiProp,
+    head,
+    phoneProp,
+    helmetMesh,
+    shirtMat,
+    pantsMat,
+    beltMesh,
+    kurtaHem,
+    kurtaPlacket,
+  };
 }
 
 export interface HelicopterRig {
@@ -1759,7 +1797,7 @@ export interface JailGuardVisual {
 
 export interface ThanaActor {
   rig: HumanoidRig;
-  kind: 'constable' | 'complainant' | 'prisoner' | 'duty';
+  kind: 'constable' | 'complainant' | 'prisoner' | 'duty' | 'inspector';
   name: string;
   baseX: number;
   baseZ: number;
@@ -1772,15 +1810,66 @@ export interface ThanaActor {
   seedId: number;
 }
 
+export interface JailInmateVisual {
+  id: string;
+  rig: HumanoidRig;
+  name: string;
+  role: 'exercise' | 'eat' | 'chat' | 'workshop' | 'ally' | 'rival';
+  ally: boolean;
+  isRival: boolean;
+  hp: number;
+  maxHp: number;
+  bribeCost: number;
+  bribed: boolean;
+  defeated: boolean;
+  attackCooldown: number;
+  staggerTimer: number;
+  alerted: boolean;
+  yardPos: { x: number; z: number; yaw: number };
+  workPos: { x: number; z: number; yaw: number };
+  nightPos: { x: number; z: number; yaw: number };
+  x: number;
+  z: number;
+  yaw: number;
+  seedId: number;
+}
+
+export interface BuildingSignInfo {
+  id: string;
+  title: string;
+  subtitle: string;
+  x: number;
+  y: number;
+  z: number;
+  accent: string;
+  maxDist?: number;
+}
+
+export interface IndianFamilyHouseRig {
+  spawnPos: THREE.Vector3;
+  pujaPos: THREE.Vector3;
+  bedPos: THREE.Vector3;
+  wardrobePos: THREE.Vector3;
+  homeCenter: THREE.Vector3;
+  nameplateMesh: THREE.Mesh;
+  updateNameplate: (houseName: string) => void;
+}
+
 export interface CentralJailRig {
   guards: JailGuardVisual[];
+  inmates: JailInmateVisual[];
+  watchtowerBeams: THREE.Group[];
   mainGateDoor: THREE.Mesh;
   northGateDoor: THREE.Mesh;
   eastGateDoor: THREE.Mesh;
+  cellGateDoor: THREE.Group;
   mainGateCollider: BuildingCollider;
   northGateCollider: BuildingCollider;
   eastGateCollider: BuildingCollider;
+  cellGateCollider: BuildingCollider;
   bunkPos: THREE.Vector3;
+  toiletPos: THREE.Vector3;
+  cellInsidePos: THREE.Vector3;
   workshopPos: THREE.Vector3;
   wardenPos: THREE.Vector3;
   escapePos: THREE.Vector3;
@@ -1795,6 +1884,7 @@ export interface CentralJailRig {
   thanaActors: ThanaActor[];
   thanaPrisoners: ThanaActor[];
   thanaLockupConstable: ThanaActor;
+  thanaInspectorActor: ThanaActor;
   thanaRadioLedMat: THREE.MeshBasicMaterial;
 }
 
@@ -1895,6 +1985,8 @@ export function buildCityEnvironment(
   interiorLightSpots: InteriorLightSpot[];
   jailRig: CentralJailRig;
   courtRig: CourtComplexRig;
+  homeRig: IndianFamilyHouseRig;
+  buildingSigns: BuildingSignInfo[];
 } {
   const { roadTex, walkTex, facades } = createCityTextures(maxAniso);
   const colliders: BuildingCollider[] = [];
@@ -1905,10 +1997,103 @@ export function buildCityEnvironment(
   const atms: AtmInfo[] = [];
   const nightEmissiveMats: THREE.MeshStandardMaterial[] = [];
   const interiorLightSpots: InteriorLightSpot[] = [];
+  const buildingSigns: BuildingSignInfo[] = [
+    {
+      id: 'sign-gunshop',
+      title: 'Pankaj Ammunation',
+      subtitle: 'Weapons · Ammo · Armor · Medkits',
+      x: 30,
+      y: 7.4,
+      z: -19.5,
+      accent: 'amber',
+    },
+    {
+      id: 'sign-hospital',
+      title: 'City Hospital',
+      subtitle: '24×7 Emergency & Trauma Care',
+      x: -30,
+      y: 13.8,
+      z: 24.0,
+      accent: 'red',
+    },
+    {
+      id: 'sign-bank',
+      title: 'Royal Bank Of India',
+      subtitle: 'Savings · FD · Rescue Mission',
+      x: -30,
+      y: 10.6,
+      z: -76.8,
+      accent: 'emerald',
+    },
+    {
+      id: 'sign-ram-mandir',
+      title: 'Shree Ram Mandir',
+      subtitle: 'Darshan & Aashirwad [E]',
+      x: 20,
+      y: 8.6,
+      z: 30,
+      accent: 'orange',
+    },
+    {
+      id: 'sign-krishna-mandir',
+      title: 'Shree Krishna Mandir',
+      subtitle: 'Darshan & Aashirwad [E]',
+      x: 90,
+      y: 8.6,
+      z: -19.5,
+      accent: 'orange',
+    },
+    {
+      id: 'sign-masjid',
+      title: 'Noor Masjid',
+      subtitle: 'Dua & Salaam [E]',
+      x: -90,
+      y: 8.6,
+      z: -19.5,
+      accent: 'emerald',
+    },
+    {
+      id: 'sign-dm',
+      title: 'DM & RTO Licensing Office',
+      subtitle: 'Arms License · Driving License · Helmet',
+      x: -92,
+      y: 8.6,
+      z: 41.2,
+      accent: 'sky',
+    },
+    {
+      id: 'sign-court',
+      title: 'District & Sessions Court',
+      subtitle: 'Walk-In Complex · Bail & Hearings',
+      x: -90,
+      y: 9.2,
+      z: 102.6,
+      accent: 'amber',
+    },
+    {
+      id: 'sign-thana',
+      title: 'Bharat Police Thana No. 4 & Central Jail',
+      subtitle: 'Duty Desk · Lockup · Jail Compound',
+      x: -150,
+      y: 6.4,
+      z: 171.8,
+      accent: 'sky',
+    },
+    {
+      id: 'sign-home',
+      title: 'Apna Ghar (Family House)',
+      subtitle: 'Puja · Bedroom · Wardrobe',
+      x: 30,
+      y: 6.2,
+      z: 102.5,
+      accent: 'amber',
+    },
+  ];
   let shopDealer: ShopDealerInfo | null = null;
   let bankClerk: ShopDealerInfo | null = null;
   let licenseOfficer: ShopDealerInfo | null = null;
   let courtRig!: CourtComplexRig;
+  let homeRig!: IndianFamilyHouseRig;
 
   const staticCityGroup = new THREE.Group();
   scene.add(staticCityGroup);
@@ -2100,10 +2285,16 @@ export function buildCityEnvironment(
 
         const shopSignTex = createStreetCanvasTex('#1c1106', '#f59e0b', 'PANKAJ AMMUNATION', 'ARMS · AMMO · ARMOR · MEDKITS');
         const shopSignBoard = new THREE.Mesh(
-          new THREE.BoxGeometry(11.5, 2.1, 0.25),
-          new THREE.MeshStandardMaterial({ map: shopSignTex, roughness: 0.3 }),
+          new THREE.BoxGeometry(11.5, 2.2, 0.25),
+          new THREE.MeshStandardMaterial({
+            map: shopSignTex,
+            emissiveMap: shopSignTex,
+            emissive: 0xffffff,
+            emissiveIntensity: 0.45,
+            roughness: 0.28,
+          }),
         );
-        shopSignBoard.position.set(bx, 5.65, bz + 10.45);
+        shopSignBoard.position.set(bx, 5.75, bz + 10.45);
         staticCityGroup.add(shopSignBoard);
 
         interiorLightSpots.push({ x: bx, y: 5.2, z: bz + 1, color: 0xffedd5, intensity: 18, distance: 26 });
@@ -2214,17 +2405,30 @@ export function buildCityEnvironment(
         hosp.receiveShadow = true;
         scene.add(hosp);
 
-        // Medical red cross emblem on North wall
+        // Medical red cross emblem on North wall + high-visibility illuminated signboard
         const crossMat = new THREE.MeshStandardMaterial({
           color: 0xdc2626,
           emissive: 0x991b1b,
-          emissiveIntensity: 0.45,
+          emissiveIntensity: 0.55,
         });
         const cV = new THREE.Mesh(new THREE.BoxGeometry(1.4, 4.6, 0.3), crossMat);
-        cV.position.set(bx, 8.2, bz - 6.1);
+        cV.position.set(bx, 7.6, bz - 6.1);
         const cH = new THREE.Mesh(new THREE.BoxGeometry(4.6, 1.4, 0.3), crossMat);
-        cH.position.set(bx, 8.2, bz - 6.1);
-        scene.add(cV, cH);
+        cH.position.set(bx, 7.6, bz - 6.1);
+        const hospSignTex = createStreetCanvasTex('#7f1d1d', '#fecaca', 'CITY HOSPITAL', '24×7 EMERGENCY & TRAUMA');
+        const hospSignBoard = new THREE.Mesh(
+          new THREE.BoxGeometry(15.2, 2.6, 0.35),
+          new THREE.MeshStandardMaterial({
+            map: hospSignTex,
+            emissiveMap: hospSignTex,
+            emissive: 0xffffff,
+            emissiveIntensity: 0.45,
+            roughness: 0.28,
+          }),
+        );
+        hospSignBoard.position.set(bx, 12.2, bz - 6.15);
+        hospSignBoard.rotation.y = Math.PI;
+        scene.add(cV, cH, hospSignBoard);
 
         colliders.push({
           minX: bx - hospW / 2,
@@ -2337,7 +2541,13 @@ export function buildCityEnvironment(
         const signTex = createBankSignTexture();
         const signBoard = new THREE.Mesh(
           new THREE.BoxGeometry(16, 2.8, 0.45),
-          new THREE.MeshStandardMaterial({ map: signTex, roughness: 0.3 }),
+          new THREE.MeshStandardMaterial({
+            map: signTex,
+            emissiveMap: signTex,
+            emissive: 0xffffff,
+            emissiveIntensity: 0.42,
+            roughness: 0.28,
+          }),
         );
         signBoard.position.set(bx, 8.1, bz + 13.2);
         scene.add(signBoard);
@@ -2503,7 +2713,13 @@ export function buildCityEnvironment(
         );
         const dmBoard = new THREE.Mesh(
           new THREE.BoxGeometry(14.5, 2.3, 0.35),
-          new THREE.MeshStandardMaterial({ map: dmSignTex, roughness: 0.3 }),
+          new THREE.MeshStandardMaterial({
+            map: dmSignTex,
+            emissiveMap: dmSignTex,
+            emissive: 0xffffff,
+            emissiveIntensity: 0.44,
+            roughness: 0.28,
+          }),
         );
         dmBoard.position.set(bx - 2, 6.7, bz + 11.1);
         scene.add(dmBoard);
@@ -2628,6 +2844,12 @@ export function buildCityEnvironment(
             height: sz,
           });
         }
+        return;
+      }
+
+      // Block (30, 90) -> Personal Enterable Indian Family House (Home Base & Initial Spawn)
+      if (bx === 30 && bz === 90) {
+        homeRig = addIndianFamilyHouse(scene, colliders, interiorLightSpots, bx, bz);
         return;
       }
 
@@ -3018,6 +3240,7 @@ export function buildCityEnvironment(
     for (const bz of blockCenters) {
       if (bx === -30 && bz === -30) continue; // Park already has palms
       if (bx === 150 && bz === -150) continue; // Mafia compound clear
+      if (bx === 30 && bz === 90) continue; // Personal Indian Family House clear
       treeSpots.push([bx + 17.5, bz + 17.5]);
       if ((Math.abs(bx) + Math.abs(bz)) % 120 === 0) {
         treeSpots.push([bx - 17.5, bz - 17.5]);
@@ -3076,6 +3299,8 @@ export function buildCityEnvironment(
     interiorLightSpots,
     jailRig,
     courtRig,
+    homeRig,
+    buildingSigns,
   };
 }
 
@@ -3087,26 +3312,30 @@ function createStreetCanvasTex(bg: string, border: string, title: string, subtit
   if (cached) return cached;
 
   const c = document.createElement('canvas');
-  c.width = 256;
-  c.height = 96;
+  c.width = 512;
+  c.height = 192;
   const ctx = c.getContext('2d')!;
   ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, 256, 96);
+  ctx.fillRect(0, 0, 512, 192);
   ctx.strokeStyle = border;
-  ctx.lineWidth = 6;
-  ctx.strokeRect(4, 4, 248, 88);
+  ctx.lineWidth = 10;
+  ctx.strokeRect(7, 7, 498, 178);
+  ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(18, 18, 476, 156);
   ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 24px sans-serif';
+  ctx.font = 'bold 38px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(title, 128, subtitle ? 36 : 48);
+  ctx.fillText(title, 256, subtitle ? 72 : 96, 462);
   if (subtitle) {
     ctx.fillStyle = '#fde68a';
-    ctx.font = 'bold 17px sans-serif';
-    ctx.fillText(subtitle, 128, 68);
+    ctx.font = 'bold 25px sans-serif';
+    ctx.fillText(subtitle, 256, 132, 462);
   }
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
   streetCanvasTexCache.set(key, tex);
   return tex;
 }
@@ -4317,19 +4546,36 @@ function addCentralJailCompound(
   jailSign.position.set(bx, 6.2, partitionZ + 0.4);
   scene.add(jailSign);
 
-  // 4 Corner Watchtowers along Jail Yard perimeter
+  // 4 Corner Watchtowers with Rotating Searchlight Spotlights along Jail Yard perimeter
+  const watchtowerBeams: THREE.Group[] = [];
+  const beamMat = new THREE.MeshBasicMaterial({
+    color: 0xfef08a,
+    transparent: true,
+    opacity: 0.16,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
   [
     [-19.5, -19.5],
     [19.5, -19.5],
     [-19.5, 3.8],
     [19.5, 3.8],
-  ].forEach(([tx, tz]) => {
+  ].forEach(([tx, tz], tIdx) => {
     const tower = new THREE.Mesh(new THREE.BoxGeometry(3.0, 9.2, 3.0), trimMat);
     tower.position.set(bx + tx, 4.6, bz + tz);
     tower.castShadow = true;
     const roof = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.5, 3.8), ironMat);
     roof.position.set(bx + tx, 9.45, bz + tz);
-    scene.add(tower, roof);
+    const searchHead = new THREE.Group();
+    searchHead.position.set(bx + tx, 8.9, bz + tz);
+    const lampBox = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.45, 0.65), darkMetalMat);
+    const beamCone = new THREE.Mesh(new THREE.ConeGeometry(4.2, 16, 12, 1, true), beamMat.clone());
+    beamCone.rotation.x = Math.PI * 0.62;
+    beamCone.position.set(0, -3.2, -6.5);
+    searchHead.add(lampBox, beamCone);
+    searchHead.rotation.y = tIdx * 1.4;
+    watchtowerBeams.push(searchHead);
+    scene.add(tower, roof, searchHead);
   });
 
   const addJailStationBoard = (
@@ -4359,26 +4605,112 @@ function addCentralJailCompound(
     scene.add(board, post, orb);
   };
 
-  // Interior Station 1: West Cell Block & Bunk (Fast-Forward Sentence)
-  const cellBlock = new THREE.Mesh(new THREE.BoxGeometry(6.5, 4.4, 10), bunkerMat);
-  cellBlock.position.set(bx - 16.5, 2.2, escapeZ);
-  cellBlock.castShadow = true;
-  scene.add(cellBlock);
-  colliders.push({ minX: bx - 19.8, maxX: bx - 13.2, minZ: escapeZ - 5, maxZ: escapeZ + 5, height: 4.4 });
+  // Interior Station 1: Enterable Barracks Cell Block (Bunk Bed + Functional Cell Toilet + Lockable Bar Door)
+  const cellRoof = new THREE.Mesh(new THREE.BoxGeometry(6.8, 0.38, 10.4), bunkerMat);
+  cellRoof.position.set(bx - 16.4, 4.35, escapeZ);
+  cellRoof.castShadow = true;
+  const cellBackW = new THREE.Mesh(new THREE.BoxGeometry(0.45, 4.2, 10.2), bunkerMat);
+  cellBackW.position.set(bx - 19.6, 2.2, escapeZ);
+  const cellNorthW = new THREE.Mesh(new THREE.BoxGeometry(6.6, 4.2, 0.45), bunkerMat);
+  cellNorthW.position.set(bx - 16.4, 2.2, escapeZ - 5.0);
+  const cellSouthW = new THREE.Mesh(new THREE.BoxGeometry(6.6, 4.2, 0.45), bunkerMat);
+  cellSouthW.position.set(bx - 16.4, 2.2, escapeZ + 5.0);
+  // East cell wall with 3.2m central doorway [escapeZ - 1.6 .. escapeZ + 1.6]
+  const cellEastN = new THREE.Mesh(new THREE.BoxGeometry(0.42, 4.2, 3.4), bunkerMat);
+  cellEastN.position.set(bx - 13.1, 2.2, escapeZ - 3.3);
+  const cellEastS = new THREE.Mesh(new THREE.BoxGeometry(0.42, 4.2, 3.4), bunkerMat);
+  cellEastS.position.set(bx - 13.1, 2.2, escapeZ + 3.3);
+  const cellEastLintel = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.9, 3.4), trimMat);
+  cellEastLintel.position.set(bx - 13.1, 3.85, escapeZ);
+  scene.add(cellRoof, cellBackW, cellNorthW, cellSouthW, cellEastN, cellEastS, cellEastLintel);
+
+  colliders.push({ minX: bx - 19.9, maxX: bx - 19.3, minZ: escapeZ - 5.2, maxZ: escapeZ + 5.2, height: 4.4 });
+  colliders.push({ minX: bx - 19.8, maxX: bx - 13.0, minZ: escapeZ - 5.25, maxZ: escapeZ - 4.75, height: 4.4 });
+  colliders.push({ minX: bx - 19.8, maxX: bx - 13.0, minZ: escapeZ + 4.75, maxZ: escapeZ + 5.25, height: 4.4 });
+  colliders.push({ minX: bx - 13.35, maxX: bx - 12.85, minZ: escapeZ - 5.1, maxZ: escapeZ - 1.6, height: 4.4 });
+  colliders.push({ minX: bx - 13.35, maxX: bx - 12.85, minZ: escapeZ + 1.6, maxZ: escapeZ + 5.1, height: 4.4 });
+
+  // Sliding Cell Bar Door (open during day, locks shut during 20:30-06:00 Night Lockup)
+  const cellGateDoor = new THREE.Group();
+  for (let bzBar = -1.35; bzBar <= 1.35; bzBar += 0.34) {
+    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.038, 3.3, 6), ironMat);
+    bar.position.set(0, 1.75, bzBar);
+    cellGateDoor.add(bar);
+  }
+  const cellGateFrame = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.14, 3.1), ironMat);
+  cellGateFrame.position.set(0, 1.8, 0);
+  cellGateDoor.add(cellGateFrame);
+  cellGateDoor.position.set(bx - 13.1, 0.24, escapeZ - 3.0); // Open by default in day
+  scene.add(cellGateDoor);
+  const cellGateCollider: BuildingCollider = {
+    minX: bx - 13.35,
+    maxX: bx - 12.85,
+    minZ: escapeZ - 1.65,
+    maxZ: escapeZ + 1.65,
+    height: 4.2,
+  };
+  colliders.push(cellGateCollider);
+
+  // Bunk Bed inside Cell (North-West corner of barracks cell)
+  const bunkPostMat = ironMat;
+  const mattressMat = new THREE.MeshStandardMaterial({ color: 0x3b82f6, roughness: 0.85 });
+  const pillowMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.9 });
+  const bunkFrame = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.14, 1.15), bunkPostMat);
+  bunkFrame.position.set(bx - 17.6, 0.78, escapeZ - 3.2);
+  const bunkMattress = new THREE.Mesh(new THREE.BoxGeometry(1.98, 0.16, 1.05), mattressMat);
+  bunkMattress.position.set(bx - 17.6, 0.92, escapeZ - 3.2);
+  const bunkPillow = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.12, 0.72), pillowMat);
+  bunkPillow.position.set(bx - 18.3, 1.04, escapeZ - 3.2);
+  const topBunk = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.14, 1.15), bunkPostMat);
+  topBunk.position.set(bx - 17.6, 2.02, escapeZ - 3.2);
+  const topMattress = new THREE.Mesh(new THREE.BoxGeometry(1.98, 0.16, 1.05), mattressMat);
+  topMattress.position.set(bx - 17.6, 2.16, escapeZ - 3.2);
+  scene.add(bunkFrame, bunkMattress, bunkPillow, topBunk, topMattress);
+  colliders.push({ minX: bx - 18.7, maxX: bx - 16.5, minZ: escapeZ - 3.85, maxZ: escapeZ - 2.55, height: 2.3 });
 
   const bunkRing = new THREE.Mesh(
-    new THREE.RingGeometry(1.2, 1.75, 24),
+    new THREE.RingGeometry(0.75, 1.08, 22),
     new THREE.MeshBasicMaterial({ color: 0x38bdf8, side: THREE.DoubleSide }),
   );
   bunkRing.rotation.x = -Math.PI / 2;
-  bunkRing.position.set(bx - 11.2, 0.27, escapeZ);
+  bunkRing.position.set(bx - 16.4, 0.27, escapeZ - 2.1);
   scene.add(bunkRing);
-  addJailStationBoard(bx - 13.0, escapeZ, Math.PI / 2, '#0c4a6e', '#bae6fd', '1. CELL BUNK [E]', 'SKIP SENTENCE (+INTEREST)', 0x38bdf8);
+  addJailStationBoard(bx - 12.7, escapeZ - 2.8, Math.PI / 2, '#0c4a6e', '#bae6fd', '1. CELL BUNK [E]', 'SLEEP NIGHT (+FD INTEREST)', 0x38bdf8);
 
-  // Interior Station 2: South-West Workshop Yard
+  // Functional Steel/Porcelain Cell Toilet + Privacy Screen (South-West corner of barracks cell)
+  const toiletPorcelain = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.35 });
+  const toiletBase = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.22, 0.44, 10), toiletPorcelain);
+  toiletBase.position.set(bx - 18.2, 0.46, escapeZ + 3.4);
+  const toiletSeat = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.3, 0.08, 10), toiletPorcelain);
+  toiletSeat.position.set(bx - 18.2, 0.7, escapeZ + 3.4);
+  const toiletTank = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.52, 0.56), toiletPorcelain);
+  toiletTank.position.set(bx - 18.6, 1.0, escapeZ + 3.4);
+  const privacyHalfWall = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.4, 0.14), bunkerMat);
+  privacyHalfWall.position.set(bx - 17.9, 0.94, escapeZ + 2.3);
+  const toiletRing = new THREE.Mesh(
+    new THREE.RingGeometry(0.55, 0.85, 18),
+    new THREE.MeshBasicMaterial({ color: 0x22d3ee, side: THREE.DoubleSide }),
+  );
+  toiletRing.rotation.x = -Math.PI / 2;
+  toiletRing.position.set(bx - 16.8, 0.27, escapeZ + 3.2);
+  scene.add(toiletBase, toiletSeat, toiletTank, privacyHalfWall, toiletRing);
+
+  // Interior Station 2: South-West Carpentry & Gardening Workshop Yard
   const workBench = new THREE.Mesh(new THREE.BoxGeometry(4.2, 1.05, 1.8), woodMat);
   workBench.position.set(bx - 8.5, 0.7, bz + 2.2);
-  scene.add(workBench);
+  const timberPlanks = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.22, 0.7), woodMat);
+  timberPlanks.position.set(bx - 8.5, 1.32, bz + 2.2);
+  const gardenSoil = new THREE.Mesh(
+    new THREE.BoxGeometry(3.2, 0.24, 1.8),
+    new THREE.MeshStandardMaterial({ color: 0x451a03, roughness: 0.95 }),
+  );
+  gardenSoil.position.set(bx - 4.2, 0.36, bz + 2.2);
+  const gardenGreens = new THREE.Mesh(
+    new THREE.BoxGeometry(2.8, 0.22, 1.4),
+    new THREE.MeshStandardMaterial({ color: 0x15803d, roughness: 0.85 }),
+  );
+  gardenGreens.position.set(bx - 4.2, 0.54, bz + 2.2);
+  scene.add(workBench, timberPlanks, gardenSoil, gardenGreens);
   colliders.push({ minX: bx - 10.6, maxX: bx - 6.4, minZ: bz + 1.3, maxZ: bz + 3.1, height: 1.2 });
 
   const workRing = new THREE.Mesh(
@@ -4388,7 +4720,19 @@ function addCentralJailCompound(
   workRing.rotation.x = -Math.PI / 2;
   workRing.position.set(bx - 8.5, 0.27, bz - 0.3);
   scene.add(workRing);
-  addJailStationBoard(bx - 8.5, bz + 2.5, Math.PI, '#064e3b', '#a7f3d0', '2. WORKSHOP [E]', '+RS 2,000 & -50% SAZA', 0x10b981);
+  addJailStationBoard(bx - 8.5, bz + 2.5, Math.PI, '#064e3b', '#a7f3d0', '2. WORKSHOP [E]', 'CARPENTRY & GARDEN (+RS 2K)', 0x10b981);
+
+  // Courtyard Mess Bench with Steel Thalis & Exercise Bar
+  const messTable = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.82, 1.15), woodMat);
+  messTable.position.set(bx - 5.2, 0.65, bz - 13.8);
+  const thaliMat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.75, roughness: 0.28 });
+  [-6.2, -5.2, -4.2].forEach((tx) => {
+    const thali = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.2, 0.04, 12), thaliMat);
+    thali.position.set(bx + tx, 1.08, bz - 13.8);
+    scene.add(thali);
+  });
+  scene.add(messTable);
+  colliders.push({ minX: bx - 7.1, maxX: bx - 3.3, minZ: bz - 14.4, maxZ: bz - 13.2, height: 1.0 });
 
   // Interior Station 3: North Warden Office & Jailer NPC
   const wardenDesk = new THREE.Mesh(new THREE.BoxGeometry(4.8, 1.15, 1.5), woodMat);
@@ -4415,15 +4759,17 @@ function addCentralJailCompound(
   scene.add(wardenRing);
   addJailStationBoard(bx, bz - 16.0, 0, '#78350f', '#fde68a', '3. JAILER MAHENDRA [E]', 'BRIBE FOR NIGHT EXIT', 0xf59e0b);
 
-  // Interior Station 4: Weak East Gate Escape Marker
+  // Interior Station 4: Weak East Gate + Drainage Grate Escape Marker
+  const drainGrate = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.08, 1.5), ironMat);
+  drainGrate.position.set(bx + 18.8, 0.25, escapeZ + 1.8);
   const escapeRing = new THREE.Mesh(
     new THREE.RingGeometry(1.2, 1.75, 24),
     new THREE.MeshBasicMaterial({ color: 0xef4444, side: THREE.DoubleSide }),
   );
   escapeRing.rotation.x = -Math.PI / 2;
   escapeRing.position.set(bx + 18.2, 0.27, escapeZ);
-  scene.add(escapeRing);
-  addJailStationBoard(bx + 20.1, escapeZ, -Math.PI / 2, '#7f1d1d', '#fecaca', '4. WEAK EAST GATE [E]', 'DODGE CONES -> 3* ESCAPE', 0xef4444);
+  scene.add(drainGrate, escapeRing);
+  addJailStationBoard(bx + 20.1, escapeZ, -Math.PI / 2, '#7f1d1d', '#fecaca', '4. WEAK GATE / GRATE [E]', 'FREE YARD ESCAPE WINDOW', 0xef4444);
 
   // 2 Patrolling Prison Guards inside Jail Yard
   const coneGeo = new THREE.CircleGeometry(7.2, 18, -Math.PI / 2 - Math.PI / 5, (Math.PI * 2) / 5);
@@ -4478,6 +4824,172 @@ function addCentralJailCompound(
       x: start.x,
       z: start.z,
       yaw: 0,
+    };
+  });
+
+  // 7 Diverse Fellow Inmates inside Central Jail (5 regular + 2 hostile rivals)
+  const inmateDefs: {
+    id: string;
+    name: string;
+    role: JailInmateVisual['role'];
+    ally: boolean;
+    isRival: boolean;
+    maxHp: number;
+    bribeCost: number;
+    shirt: number;
+    pants: number;
+    outfit: 'casual' | 'kurta';
+    yardPos: { x: number; z: number; yaw: number };
+    workPos: { x: number; z: number; yaw: number };
+    nightPos: { x: number; z: number; yaw: number };
+    seed: number;
+  }[] = [
+    {
+      id: 'chhotu-ally',
+      name: 'Chhotu Mechanic',
+      role: 'ally',
+      ally: true,
+      isRival: false,
+      maxHp: 100,
+      bribeCost: 0,
+      shirt: 0xe2e8f0,
+      pants: 0x475569,
+      outfit: 'casual',
+      yardPos: { x: bx + 2.8, z: bz - 2.6, yaw: -Math.PI * 0.45 },
+      workPos: { x: bx - 6.8, z: bz + 0.6, yaw: Math.PI },
+      nightPos: { x: bx - 14.6, z: escapeZ - 3.0, yaw: 0 },
+      seed: 801,
+    },
+    {
+      id: 'shera',
+      name: 'Shera Pahalwan',
+      role: 'exercise',
+      ally: false,
+      isRival: false,
+      maxHp: 100,
+      bribeCost: 0,
+      shirt: 0xf1f5f9,
+      pants: 0x334155,
+      outfit: 'casual',
+      yardPos: { x: bx + 1.8, z: bz - 9.2, yaw: 0.4 },
+      workPos: { x: bx - 9.8, z: bz + 0.4, yaw: Math.PI },
+      nightPos: { x: bx - 14.6, z: escapeZ - 0.8, yaw: Math.PI / 2 },
+      seed: 802,
+    },
+    {
+      id: 'dada-bhiku',
+      name: 'Dada Bhiku',
+      role: 'eat',
+      ally: false,
+      isRival: false,
+      maxHp: 100,
+      bribeCost: 0,
+      shirt: 0xd6d3d1,
+      pants: 0x57534e,
+      outfit: 'kurta',
+      yardPos: { x: bx - 5.2, z: bz - 12.6, yaw: Math.PI },
+      workPos: { x: bx - 4.4, z: bz + 0.5, yaw: Math.PI },
+      nightPos: { x: bx - 15.8, z: escapeZ + 0.6, yaw: -Math.PI / 2 },
+      seed: 803,
+    },
+    {
+      id: 'kaidi-raju',
+      name: 'Kaidi Raju',
+      role: 'workshop',
+      ally: false,
+      isRival: false,
+      maxHp: 100,
+      bribeCost: 0,
+      shirt: 0xcbd5e1,
+      pants: 0x475569,
+      outfit: 'casual',
+      yardPos: { x: bx - 7.8, z: bz - 2.2, yaw: 0.3 },
+      workPos: { x: bx - 8.5, z: bz + 0.8, yaw: Math.PI },
+      nightPos: { x: bx - 17.6, z: escapeZ - 1.0, yaw: 0 },
+      seed: 804,
+    },
+    {
+      id: 'lala-bhai',
+      name: 'Lala Bhai',
+      role: 'chat',
+      ally: false,
+      isRival: false,
+      maxHp: 100,
+      bribeCost: 0,
+      shirt: 0xfef3c7,
+      pants: 0x475569,
+      outfit: 'kurta',
+      yardPos: { x: bx - 4.2, z: bz - 6.8, yaw: -0.5 },
+      workPos: { x: bx - 5.5, z: bz - 0.2, yaw: Math.PI },
+      nightPos: { x: bx - 15.2, z: escapeZ + 2.2, yaw: Math.PI },
+      seed: 805,
+    },
+    {
+      id: 'rival-kaalia',
+      name: 'Kaalia Bhaiya (Rival)',
+      role: 'rival',
+      ally: false,
+      isRival: true,
+      maxHp: 75,
+      bribeCost: 500,
+      shirt: 0x991b1b,
+      pants: 0x1e293b,
+      outfit: 'casual',
+      yardPos: { x: bx + 8.6, z: bz - 6.8, yaw: Math.PI * 0.5 },
+      workPos: { x: bx - 1.5, z: bz - 1.2, yaw: Math.PI },
+      nightPos: { x: bx - 17.2, z: escapeZ + 2.4, yaw: 0 },
+      seed: 806,
+    },
+    {
+      id: 'rival-billa',
+      name: 'Billa Don (Rival)',
+      role: 'rival',
+      ally: false,
+      isRival: true,
+      maxHp: 95,
+      bribeCost: 900,
+      shirt: 0x7f1d1d,
+      pants: 0x0f172a,
+      outfit: 'kurta',
+      yardPos: { x: bx + 11.4, z: bz - 12.2, yaw: -Math.PI * 0.35 },
+      workPos: { x: bx + 5.8, z: bz - 3.6, yaw: 0.4 },
+      nightPos: { x: bx - 17.8, z: escapeZ - 2.6, yaw: Math.PI * 0.5 },
+      seed: 807,
+    },
+  ];
+
+  const inmates: JailInmateVisual[] = inmateDefs.map((def) => {
+    const rig = createHumanoidModel({
+      shirtColor: def.shirt,
+      pantsColor: def.pants,
+      skinColor: 0xc98b63,
+      outfitStyle: def.outfit,
+    });
+    rig.root.position.set(def.yardPos.x, 0.24, def.yardPos.z);
+    rig.root.rotation.y = def.yardPos.yaw;
+    scene.add(rig.root);
+    return {
+      id: def.id,
+      rig,
+      name: def.name,
+      role: def.role,
+      ally: def.ally,
+      isRival: def.isRival,
+      hp: def.maxHp,
+      maxHp: def.maxHp,
+      bribeCost: def.bribeCost,
+      bribed: false,
+      defeated: false,
+      attackCooldown: 0,
+      staggerTimer: 0,
+      alerted: false,
+      yardPos: def.yardPos,
+      workPos: def.workPos,
+      nightPos: def.nightPos,
+      x: def.yardPos.x,
+      z: def.yardPos.z,
+      yaw: def.yardPos.yaw,
+      seedId: def.seed,
     };
   });
 
@@ -4750,13 +5262,13 @@ function addCentralJailCompound(
   const thanaPrisoners: ThanaActor[] = [
     {
       name: 'Kaidi Bunty',
-      x: bx + 9.2,
-      z: bz + 10.6,
+      x: bx + 7.4,
+      z: bz + 9.8,
       shirt: 0x64748b,
       seed: 710,
       waypoints: [
-        { x: bx + 7.6, z: bz + 10.6 },
-        { x: bx + 10.8, z: bz + 12.2 },
+        { x: bx + 7.2, z: bz + 9.4 },
+        { x: bx + 10.6, z: bz + 10.2 },
       ],
     },
     {
@@ -4797,6 +5309,44 @@ function addCentralJailCompound(
     return actor;
   });
 
+  // Cell-front Inspector Review Table & Chair + Arresting Inspector (animated during THANA_LOCKUP)
+  const reviewTable = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.78, 0.7), woodMat);
+  reviewTable.position.set(bx + 9.2, 0.67, cellFrontZ + 1.35);
+  const reviewFile = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.06, 0.3), paperMat);
+  reviewFile.position.set(bx + 9.2, 1.09, cellFrontZ + 1.35);
+  const reviewChairSeat = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.1, 0.54), woodMat);
+  reviewChairSeat.position.set(bx + 9.2, 0.72, cellFrontZ + 2.15);
+  const reviewChairBack = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.58, 0.08), woodMat);
+  reviewChairBack.position.set(bx + 9.2, 1.02, cellFrontZ + 2.38);
+  scene.add(reviewTable, reviewFile, reviewChairSeat, reviewChairBack);
+
+  const inspectorRig = createHumanoidModel({
+    shirtColor: 0xa88f5c,
+    pantsColor: 0x8d7548,
+    skinColor: 0xd19a72,
+    isPolice: true,
+  });
+  const inspFile = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.07, 0.36), paperMat);
+  inspFile.position.set(0, -0.26, -0.15);
+  inspectorRig.leftArm.add(inspFile);
+  inspectorRig.root.position.set(bx - 1.8, 0.28, dutyDeskZ - 1.25);
+  inspectorRig.root.rotation.y = Math.PI;
+  scene.add(inspectorRig.root);
+  const thanaInspectorActor: ThanaActor = {
+    rig: inspectorRig,
+    kind: 'inspector',
+    name: 'Inspector Vijay Rathore',
+    baseX: bx - 1.8,
+    baseZ: dutyDeskZ - 1.25,
+    x: bx - 1.8,
+    z: dutyDeskZ - 1.25,
+    yaw: Math.PI,
+    wpIndex: 0,
+    active: true,
+    seedId: 712,
+  };
+  thanaActors.push(thanaInspectorActor);
+
   interiorLightSpots.push(
     { x: bx, y: 4.5, z: thanaMidZ + 1.5, color: 0xe0f2fe, intensity: 16, distance: 28 },
     { x: bx + 12.5, y: 4.4, z: bz + 11.5, color: 0xfef3c7, intensity: 12, distance: 18 },
@@ -4804,13 +5354,19 @@ function addCentralJailCompound(
 
   return {
     guards,
+    inmates,
+    watchtowerBeams,
     mainGateDoor,
     northGateDoor,
     eastGateDoor,
+    cellGateDoor,
     mainGateCollider,
     northGateCollider,
     eastGateCollider,
-    bunkPos: new THREE.Vector3(bx - 11.2, 0.24, escapeZ),
+    cellGateCollider,
+    bunkPos: new THREE.Vector3(bx - 16.4, 0.24, escapeZ - 2.1),
+    toiletPos: new THREE.Vector3(bx - 16.8, 0.24, escapeZ + 3.2),
+    cellInsidePos: new THREE.Vector3(bx - 15.2, 0.24, escapeZ),
     workshopPos: new THREE.Vector3(bx - 8.5, 0.24, bz - 0.3),
     wardenPos: new THREE.Vector3(bx, 0.24, bz - 12.7),
     escapePos: new THREE.Vector3(bx + 18.2, 0.24, escapeZ),
@@ -4819,12 +5375,13 @@ function addCentralJailCompound(
     bribeOutsidePos: new THREE.Vector3(bx, 0.18, bz - 28),
     escapeOutsidePos: new THREE.Vector3(bx + 28.5, 0.18, escapeZ),
     thanaDeskPos: new THREE.Vector3(bx, 0.28, dutyDeskZ + 2.2),
-    thanaLockupCellPos: new THREE.Vector3(bx + 9.2, 0.28, bz + 11.4),
-    thanaInspectorPos: new THREE.Vector3(bx + 9.2, 0.28, cellFrontZ + 1.6),
+    thanaLockupCellPos: new THREE.Vector3(bx + 8.8, 0.28, bz + 11.5),
+    thanaInspectorPos: new THREE.Vector3(bx + 9.2, 0.28, cellFrontZ + 2.05),
     thanaDoorwayPos: new THREE.Vector3(bx, 0.18, thanaZEnd + 3.0),
     thanaActors,
     thanaPrisoners,
     thanaLockupConstable,
+    thanaInspectorActor,
     thanaRadioLedMat,
   };
 }
@@ -4873,7 +5430,13 @@ export function createDistrictCourtroomStage(scene: THREE.Scene): CourtroomStage
   const courtSignTex = createStreetCanvasTex('#450a0a', '#fbbf24', 'DISTRICT & SESSIONS COURT', 'सत्यमेव जयते');
   const plaque = new THREE.Mesh(
     new THREE.BoxGeometry(6.8, 1.65, 0.18),
-    new THREE.MeshStandardMaterial({ map: courtSignTex, roughness: 0.35 }),
+    new THREE.MeshStandardMaterial({
+      map: courtSignTex,
+      emissiveMap: courtSignTex,
+      emissive: 0xffffff,
+      emissiveIntensity: 0.35,
+      roughness: 0.32,
+    }),
   );
   plaque.position.set(0, 5.1, -9.4);
   root.add(plaque);
@@ -5089,6 +5652,539 @@ export function createPrisonerVan(): VehicleRig {
 
   return { root, wheels, lightBarRed, lightBarBlue };
 }
+
+function createSwastikOrShubhLabhTex(mode: 'shubh' | 'labh' | 'swastik' | 'welcome'): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = mode === 'welcome' ? 384 : 192;
+  c.height = mode === 'welcome' ? 128 : 192;
+  const ctx = c.getContext('2d')!;
+  if (mode === 'welcome') {
+    ctx.fillStyle = '#7c2d12';
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.strokeStyle = '#facc15';
+    ctx.lineWidth = 8;
+    ctx.strokeRect(8, 8, c.width - 16, c.height - 16);
+    ctx.fillStyle = '#fef3c7';
+    ctx.font = 'bold 46px serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('WELCOME', c.width / 2, c.height / 2);
+  } else if (mode === 'swastik') {
+    ctx.fillStyle = '#fff7ed';
+    ctx.fillRect(0, 0, 192, 192);
+    ctx.strokeStyle = '#d97706';
+    ctx.lineWidth = 8;
+    ctx.strokeRect(8, 8, 176, 176);
+    ctx.strokeStyle = '#dc2626';
+    ctx.lineWidth = 14;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(96, 40);
+    ctx.lineTo(96, 152);
+    ctx.moveTo(40, 96);
+    ctx.lineTo(152, 96);
+    ctx.moveTo(96, 40);
+    ctx.lineTo(148, 40);
+    ctx.moveTo(152, 96);
+    ctx.lineTo(152, 148);
+    ctx.moveTo(96, 152);
+    ctx.lineTo(44, 152);
+    ctx.moveTo(40, 96);
+    ctx.lineTo(40, 44);
+    ctx.stroke();
+    ctx.fillStyle = '#dc2626';
+    [
+      [66, 66],
+      [126, 66],
+      [66, 126],
+      [126, 126],
+    ].forEach(([dx, dy]) => {
+      ctx.beginPath();
+      ctx.arc(dx, dy, 6, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  } else {
+    ctx.fillStyle = '#7f1d1d';
+    ctx.fillRect(0, 0, 192, 192);
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 8;
+    ctx.strokeRect(8, 8, 176, 176);
+    ctx.fillStyle = '#fde68a';
+    ctx.font = 'bold 54px serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(mode === 'shubh' ? 'शुभ' : 'लाभ', 96, 78);
+    ctx.font = 'bold 26px sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(mode === 'shubh' ? 'SHUBH' : 'LABH', 96, 140);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function createDeityPaintingTex(deity: 'krishna' | 'ram' | 'ganesha'): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 320;
+  const ctx = c.getContext('2d')!;
+
+  const grad = ctx.createRadialGradient(128, 130, 18, 128, 150, 170);
+  if (deity === 'krishna') {
+    grad.addColorStop(0, '#fef08a');
+    grad.addColorStop(0.55, '#1d4ed8');
+    grad.addColorStop(1, '#0f172a');
+  } else if (deity === 'ram') {
+    grad.addColorStop(0, '#fde68a');
+    grad.addColorStop(0.55, '#ea580c');
+    grad.addColorStop(1, '#431407');
+  } else {
+    grad.addColorStop(0, '#fed7aa');
+    grad.addColorStop(0.55, '#b91c1c');
+    grad.addColorStop(1, '#450a0a');
+  }
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 256, 320);
+
+  // Sacred golden aura halo
+  ctx.strokeStyle = '#fbbf24';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(128, 128, 66, 0, Math.PI * 2);
+  ctx.stroke();
+
+  if (deity === 'krishna') {
+    // Lord Krishna torso + blue face + golden crown + peacock feather + flute
+    ctx.fillStyle = '#eab308';
+    ctx.beginPath();
+    ctx.moveTo(70, 260);
+    ctx.lineTo(186, 260);
+    ctx.lineTo(164, 172);
+    ctx.lineTo(92, 172);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#38bdf8';
+    ctx.beginPath();
+    ctx.arc(128, 132, 34, 0, Math.PI * 2);
+    ctx.fill();
+    // Crown & peacock feather
+    ctx.fillStyle = '#f59e0b';
+    ctx.fillRect(102, 86, 52, 18);
+    ctx.fillStyle = '#10b981';
+    ctx.beginPath();
+    ctx.ellipse(144, 62, 14, 24, 0.35, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#1d4ed8';
+    ctx.beginPath();
+    ctx.arc(144, 62, 6, 0, Math.PI * 2);
+    ctx.fill();
+    // Flute
+    ctx.strokeStyle = '#fde68a';
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.moveTo(78, 166);
+    ctx.lineTo(182, 148);
+    ctx.stroke();
+  } else if (deity === 'ram') {
+    // Shree Ram emerald/saffron robe + golden crown + kodand bow
+    ctx.fillStyle = '#f97316';
+    ctx.beginPath();
+    ctx.moveTo(70, 260);
+    ctx.lineTo(186, 260);
+    ctx.lineTo(166, 170);
+    ctx.lineTo(90, 170);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#38bdf8';
+    ctx.beginPath();
+    ctx.arc(128, 132, 33, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fbbf24';
+    ctx.beginPath();
+    ctx.moveTo(100, 102);
+    ctx.lineTo(128, 62);
+    ctx.lineTo(156, 102);
+    ctx.closePath();
+    ctx.fill();
+    // Tilak & Bow
+    ctx.fillStyle = '#fef3c7';
+    ctx.fillRect(126, 110, 4, 14);
+    ctx.strokeStyle = '#fde047';
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.arc(182, 165, 58, -1.2, 1.2);
+    ctx.stroke();
+  } else {
+    // Lord Ganesha saffron dhoti + elephant head, ears & curved trunk + mukut
+    ctx.fillStyle = '#facc15';
+    ctx.beginPath();
+    ctx.ellipse(128, 224, 52, 46, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fb923c';
+    ctx.beginPath();
+    ctx.ellipse(82, 134, 24, 34, -0.2, 0, Math.PI * 2);
+    ctx.ellipse(174, 134, 24, 34, 0.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fdba74';
+    ctx.beginPath();
+    ctx.arc(128, 132, 36, 0, Math.PI * 2);
+    ctx.fill();
+    // Trunk
+    ctx.strokeStyle = '#fdba74';
+    ctx.lineWidth = 15;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(128, 136);
+    ctx.quadraticCurveTo(128, 180, 104, 184);
+    ctx.stroke();
+    // Golden Crown + Tilak
+    ctx.fillStyle = '#f59e0b';
+    ctx.beginPath();
+    ctx.moveTo(102, 100);
+    ctx.lineTo(128, 62);
+    ctx.lineTo(154, 100);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#dc2626';
+    ctx.beginPath();
+    ctx.arc(128, 114, 5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.84)';
+  ctx.fillRect(14, 274, 228, 34);
+  ctx.fillStyle = '#fde68a';
+  ctx.font = 'bold 20px serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(
+    deity === 'krishna' ? 'SHREE KRISHNA' : deity === 'ram' ? 'SHREE RAM' : 'SHREE GANESHA',
+    128,
+    291,
+  );
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function addMarigoldGarland(parent: THREE.Group, startX: number, endX: number, y: number, z: number, sag = 0.45): void {
+  const saffronMat = new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.55 });
+  const goldMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.5 });
+  const leafMat = new THREE.MeshStandardMaterial({ color: 0x16a34a, roughness: 0.7 });
+  const flowerGeo = new THREE.SphereGeometry(0.16, 8, 8);
+  const leafGeo = new THREE.BoxGeometry(0.14, 0.22, 0.05);
+
+  const count = Math.max(8, Math.round(Math.abs(endX - startX) * 2.2));
+  for (let i = 0; i <= count; i++) {
+    const t = i / count;
+    const fx = THREE.MathUtils.lerp(startX, endX, t);
+    const fy = y - Math.sin(t * Math.PI) * sag;
+    const f = new THREE.Mesh(flowerGeo, i % 2 === 0 ? saffronMat : goldMat);
+    f.position.set(fx, fy, z);
+    parent.add(f);
+    if (i % 3 === 1) {
+      const leaf = new THREE.Mesh(leafGeo, leafMat);
+      leaf.position.set(fx, fy - 0.14, z);
+      parent.add(leaf);
+    }
+  }
+}
+
+function addIndianFamilyHouse(
+  scene: THREE.Scene,
+  colliders: BuildingCollider[],
+  interiorLightSpots: InteriorLightSpot[],
+  bx: number,
+  bz: number,
+): IndianFamilyHouseRig {
+  const g = new THREE.Group();
+  const creamWallMat = new THREE.MeshStandardMaterial({ color: 0xf5ebe0, roughness: 0.72 });
+  const sandstoneMat = new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.78 });
+  const roofMat = new THREE.MeshStandardMaterial({ color: 0x9a3412, roughness: 0.75 });
+  const floorMat = new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.35 });
+  const courtyardMat = new THREE.MeshStandardMaterial({ color: 0xd6cfc2, roughness: 0.82 });
+  const woodMat = new THREE.MeshStandardMaterial({ color: 0x5c3416, roughness: 0.58 });
+  const ironMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.75, roughness: 0.35 });
+  const goldMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.78, roughness: 0.25 });
+  const sofaMat = new THREE.MeshStandardMaterial({ color: 0x991b1b, roughness: 0.75 });
+
+  // Compound courtyard plinth
+  const plinth = new THREE.Mesh(new THREE.BoxGeometry(38, 0.26, 38), courtyardMat);
+  plinth.position.set(bx, 0.13, bz);
+  plinth.receiveShadow = true;
+  g.add(plinth);
+
+  // Compound perimeter walls (with 8m open front entrance at z = bz + 18.6, x: bx-4..bx+4)
+  const compFrontL = new THREE.Mesh(new THREE.BoxGeometry(15, 2.2, 0.5), creamWallMat);
+  compFrontL.position.set(bx - 11.5, 1.25, bz + 18.6);
+  const compFrontR = new THREE.Mesh(new THREE.BoxGeometry(15, 2.2, 0.5), creamWallMat);
+  compFrontR.position.set(bx + 11.5, 1.25, bz + 18.6);
+  const compBack = new THREE.Mesh(new THREE.BoxGeometry(38, 2.3, 0.5), creamWallMat);
+  compBack.position.set(bx, 1.3, bz - 18.6);
+  const compLeft = new THREE.Mesh(new THREE.BoxGeometry(0.5, 2.3, 37.5), creamWallMat);
+  compLeft.position.set(bx - 18.6, 1.3, bz);
+  const compRight = new THREE.Mesh(new THREE.BoxGeometry(0.5, 2.3, 37.5), creamWallMat);
+  compRight.position.set(bx + 18.6, 1.3, bz);
+  g.add(compFrontL, compFrontR, compBack, compLeft, compRight);
+  colliders.push({ minX: bx - 19, maxX: bx - 4, minZ: bz + 18.2, maxZ: bz + 19.0, height: 2.3 });
+  colliders.push({ minX: bx + 4, maxX: bx + 19, minZ: bz + 18.2, maxZ: bz + 19.0, height: 2.3 });
+  colliders.push({ minX: bx - 19, maxX: bx + 19, minZ: bz - 19.0, maxZ: bz - 18.2, height: 2.3 });
+  colliders.push({ minX: bx - 19, maxX: bx - 18.2, minZ: bz - 18.6, maxZ: bz + 18.6, height: 2.3 });
+  colliders.push({ minX: bx + 18.2, maxX: bx + 19, minZ: bz - 18.6, maxZ: bz + 18.6, height: 2.3 });
+
+  // Compound entrance pillars + arch + Marigold garland + open iron gate leaves
+  [-4.3, 4.3].forEach((px) => {
+    const pillar = new THREE.Mesh(new THREE.BoxGeometry(1.1, 4.2, 1.1), sandstoneMat);
+    pillar.position.set(bx + px, 2.2, bz + 18.6);
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.35, 1.4), roofMat);
+    cap.position.set(bx + px, 4.45, bz + 18.6);
+    g.add(pillar, cap);
+  });
+  const gateArch = new THREE.Mesh(new THREE.BoxGeometry(9.8, 0.55, 0.7), roofMat);
+  gateArch.position.set(bx, 4.35, bz + 18.6);
+  g.add(gateArch);
+  addMarigoldGarland(g, bx - 4.0, bx + 4.0, 4.0, bz + 19.05, 0.42);
+
+  // Welcome sign above outer gate
+  const welcomeTex = createSwastikOrShubhLabhTex('welcome');
+  const welcomeBoard = new THREE.Mesh(
+    new THREE.BoxGeometry(3.6, 1.05, 0.2),
+    new THREE.MeshStandardMaterial({
+      map: welcomeTex,
+      emissiveMap: welcomeTex,
+      emissive: 0xffffff,
+      emissiveIntensity: 0.35,
+      roughness: 0.35,
+    }),
+  );
+  welcomeBoard.position.set(bx, 4.95, bz + 18.7);
+  g.add(welcomeBoard);
+
+  // Open wrought-iron gate leaves swung inward cleanly (walkable)
+  [-4.0, 4.0].forEach((gx) => {
+    const leaf = new THREE.Mesh(new THREE.BoxGeometry(0.14, 2.4, 3.2), ironMat);
+    leaf.position.set(bx + gx, 1.4, bz + 16.9);
+    g.add(leaf);
+  });
+
+  // Prominent Custom House Nameplate beside entrance pillar (dynamically updated canvas)
+  const nameplateCanvas = document.createElement('canvas');
+  nameplateCanvas.width = 512;
+  nameplateCanvas.height = 176;
+  const nameplateCtx = nameplateCanvas.getContext('2d')!;
+  const nameplateTex = new THREE.CanvasTexture(nameplateCanvas);
+  nameplateTex.colorSpace = THREE.SRGBColorSpace;
+  nameplateTex.anisotropy = 4;
+
+  const drawNameplate = (houseName: string) => {
+    const cleanName = (houseName || 'Apna Ghar').trim().slice(0, 28);
+    nameplateCtx.fillStyle = '#3b1c08';
+    nameplateCtx.fillRect(0, 0, 512, 176);
+    nameplateCtx.strokeStyle = '#f59e0b';
+    nameplateCtx.lineWidth = 10;
+    nameplateCtx.strokeRect(8, 8, 496, 160);
+    nameplateCtx.strokeStyle = '#fde68a';
+    nameplateCtx.lineWidth = 2;
+    nameplateCtx.strokeRect(18, 18, 476, 140);
+    nameplateCtx.fillStyle = '#fcd34d';
+    nameplateCtx.font = 'bold 20px sans-serif';
+    nameplateCtx.textAlign = 'center';
+    nameplateCtx.textBaseline = 'middle';
+    nameplateCtx.fillText('✦ SUBH GRAH PRAVESH · WELCOME ✦', 256, 46);
+    nameplateCtx.fillStyle = '#ffffff';
+    nameplateCtx.font = 'bold 42px serif';
+    nameplateCtx.fillText(cleanName, 256, 108, 456);
+    nameplateTex.needsUpdate = true;
+  };
+  drawNameplate('Apna Ghar');
+
+  const nameplateMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(4.4, 1.5, 0.22),
+    new THREE.MeshStandardMaterial({
+      map: nameplateTex,
+      emissiveMap: nameplateTex,
+      emissive: 0xffffff,
+      emissiveIntensity: 0.42,
+      roughness: 0.25,
+      metalness: 0.35,
+    }),
+  );
+  nameplateMesh.position.set(bx + 6.9, 2.55, bz + 18.85);
+  g.add(nameplateMesh);
+
+  // Main House Floor (20m wide x 18m deep, centered at (bx, bz))
+  const houseFloor = new THREE.Mesh(new THREE.BoxGeometry(20.4, 0.36, 18.4), floorMat);
+  houseFloor.position.set(bx, 0.18, bz);
+  houseFloor.receiveShadow = true;
+  g.add(houseFloor);
+
+  // House Walls: Back, Left, Right, and Front with wide 5m open doorway (bx-2.5 .. bx+2.5)
+  const houseBack = new THREE.Mesh(new THREE.BoxGeometry(20.4, 5.2, 0.7), creamWallMat);
+  houseBack.position.set(bx, 2.78, bz - 9.0);
+  houseBack.castShadow = true;
+  const houseLeft = new THREE.Mesh(new THREE.BoxGeometry(0.7, 5.2, 18.4), creamWallMat);
+  houseLeft.position.set(bx - 10.0, 2.78, bz);
+  houseLeft.castShadow = true;
+  const houseRight = new THREE.Mesh(new THREE.BoxGeometry(0.7, 5.2, 18.4), creamWallMat);
+  houseRight.position.set(bx + 10.0, 2.78, bz);
+  houseRight.castShadow = true;
+  const houseFrontL = new THREE.Mesh(new THREE.BoxGeometry(7.7, 5.2, 0.7), creamWallMat);
+  houseFrontL.position.set(bx - 6.35, 2.78, bz + 9.0);
+  const houseFrontR = new THREE.Mesh(new THREE.BoxGeometry(7.7, 5.2, 0.7), creamWallMat);
+  houseFrontR.position.set(bx + 6.35, 2.78, bz + 9.0);
+  const houseHeader = new THREE.Mesh(new THREE.BoxGeometry(5.6, 1.5, 0.75), sandstoneMat);
+  houseHeader.position.set(bx, 4.65, bz + 9.0);
+  const houseRoof = new THREE.Mesh(new THREE.BoxGeometry(22.2, 0.7, 20.6), roofMat);
+  houseRoof.position.set(bx, 5.7, bz + 0.3);
+  houseRoof.castShadow = true;
+  g.add(houseBack, houseLeft, houseRight, houseFrontL, houseFrontR, houseHeader, houseRoof);
+
+  colliders.push({ minX: bx - 10.4, maxX: bx + 10.4, minZ: bz - 9.4, maxZ: bz - 8.6, height: 5.4 });
+  colliders.push({ minX: bx - 10.4, maxX: bx - 9.6, minZ: bz - 9.2, maxZ: bz + 9.2, height: 5.4 });
+  colliders.push({ minX: bx + 9.6, maxX: bx + 10.4, minZ: bz - 9.2, maxZ: bz + 9.2, height: 5.4 });
+  colliders.push({ minX: bx - 10.4, maxX: bx - 2.5, minZ: bz + 8.6, maxZ: bz + 9.4, height: 5.4 });
+  colliders.push({ minX: bx + 2.5, maxX: bx + 10.4, minZ: bz + 8.6, maxZ: bz + 9.4, height: 5.4 });
+
+  // Inner partition wall separating Bedroom (East wing) with wide walkable doorway
+  const bedroomDiv = new THREE.Mesh(new THREE.BoxGeometry(0.45, 4.8, 10.5), creamWallMat);
+  bedroomDiv.position.set(bx + 2.8, 2.58, bz - 3.6);
+  g.add(bedroomDiv);
+  colliders.push({ minX: bx + 2.5, maxX: bx + 3.1, minZ: bz - 8.8, maxZ: bz + 1.6, height: 4.8 });
+
+  // Auspicious Shubh Labh & Swastik Plaques + Marigold Door Toran + Veranda Welcome Mat
+  const shubhMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1.1, 1.1, 0.14),
+    new THREE.MeshStandardMaterial({ map: createSwastikOrShubhLabhTex('shubh'), roughness: 0.4 }),
+  );
+  shubhMesh.position.set(bx - 3.3, 2.8, bz + 9.42);
+  const labhMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1.1, 1.1, 0.14),
+    new THREE.MeshStandardMaterial({ map: createSwastikOrShubhLabhTex('labh'), roughness: 0.4 }),
+  );
+  labhMesh.position.set(bx + 3.3, 2.8, bz + 9.42);
+  const swastikMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1.15, 1.15, 0.16),
+    new THREE.MeshStandardMaterial({ map: createSwastikOrShubhLabhTex('swastik'), roughness: 0.35 }),
+  );
+  swastikMesh.position.set(bx, 4.62, bz + 9.44);
+  g.add(shubhMesh, labhMesh, swastikMesh);
+
+  addMarigoldGarland(g, bx - 2.5, bx + 2.5, 3.85, bz + 9.5, 0.38);
+
+  // Living Room Sofa Set, Carpet, Center Table
+  const rug = new THREE.Mesh(new THREE.BoxGeometry(5.6, 0.05, 4.2), sofaMat);
+  rug.position.set(bx - 2.8, 0.38, bz + 1.6);
+  const sofa = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.95, 1.3), sofaMat);
+  sofa.position.set(bx - 2.8, 0.82, bz + 3.6);
+  const coffeeTable = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.55, 1.2), woodMat);
+  coffeeTable.position.set(bx - 2.8, 0.64, bz + 1.5);
+  g.add(rug, sofa, coffeeTable);
+  colliders.push({ minX: bx - 4.9, maxX: bx - 0.7, minZ: bz + 2.9, maxZ: bz + 4.3, height: 1.0 });
+
+  // 3 Framed Hindu Deity Paintings in Living Room (Lord Krishna, Lord Ram, Lord Ganesha)
+  const deities: { deity: 'krishna' | 'ram' | 'ganesha'; x: number; y: number; z: number; ry: number }[] = [
+    { deity: 'krishna', x: bx - 3.0, y: 2.95, z: bz - 8.58, ry: 0 },
+    { deity: 'ram', x: bx - 0.1, y: 2.95, z: bz - 8.58, ry: 0 },
+    { deity: 'ganesha', x: bx - 9.58, y: 2.95, z: bz - 0.5, ry: Math.PI / 2 },
+  ];
+  for (const d of deities) {
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(1.95, 2.35, 0.14), goldMat);
+    frame.position.set(d.x, d.y, d.z);
+    frame.rotation.y = d.ry;
+    const art = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.7, 2.1),
+      new THREE.MeshStandardMaterial({
+        map: createDeityPaintingTex(d.deity),
+        emissiveMap: createDeityPaintingTex(d.deity),
+        emissive: 0xffffff,
+        emissiveIntensity: 0.22,
+        roughness: 0.45,
+      }),
+    );
+    art.position.set(0, 0, 0.08);
+    frame.add(art);
+    g.add(frame);
+  }
+
+  // Home Puja Corner (North-West corner of Living Room)
+  const pujaPos = new THREE.Vector3(bx - 7.2, 0.36, bz - 5.2);
+  const mandirBase = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.35, 1.3), woodMat);
+  mandirBase.position.set(bx - 7.6, 1.02, bz - 7.6);
+  const mandirRoof = new THREE.Mesh(new THREE.ConeGeometry(1.25, 1.15, 4), goldMat);
+  mandirRoof.rotation.y = Math.PI / 4;
+  mandirRoof.position.set(bx - 7.6, 2.35, bz - 7.6);
+  const diyaGlow = new THREE.Mesh(
+    new THREE.SphereGeometry(0.14, 10, 10),
+    new THREE.MeshBasicMaterial({ color: 0xfef08a }),
+  );
+  diyaGlow.position.set(bx - 7.6, 1.82, bz - 7.1);
+  const pujaRing = new THREE.Mesh(
+    new THREE.RingGeometry(1.0, 1.35, 24),
+    new THREE.MeshBasicMaterial({ color: 0xf59e0b, side: THREE.DoubleSide }),
+  );
+  pujaRing.rotation.x = -Math.PI / 2;
+  pujaRing.position.set(pujaPos.x, 0.39, pujaPos.z);
+  g.add(mandirBase, mandirRoof, diyaGlow, pujaRing);
+  colliders.push({ minX: bx - 8.8, maxX: bx - 6.4, minZ: bz - 8.4, maxZ: bz - 6.8, height: 2.5 });
+
+  // Bedroom (East Wing: Double Bed + Quilt + Pillows + Bedside Lamp)
+  const bedPos = new THREE.Vector3(bx + 6.4, 0.36, bz - 2.6);
+  const bedFrame = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.65, 3.8), woodMat);
+  bedFrame.position.set(bx + 7.4, 0.68, bz - 6.2);
+  const mattress = new THREE.Mesh(
+    new THREE.BoxGeometry(3.15, 0.3, 3.55),
+    new THREE.MeshStandardMaterial({ color: 0xfef3c7, roughness: 0.78 }),
+  );
+  mattress.position.set(bx + 7.4, 1.12, bz - 6.2);
+  const quilt = new THREE.Mesh(
+    new THREE.BoxGeometry(3.18, 0.14, 2.2),
+    new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.8 }),
+  );
+  quilt.position.set(bx + 7.4, 1.24, bz - 5.5);
+  const bedRing = new THREE.Mesh(
+    new THREE.RingGeometry(1.0, 1.35, 24),
+    new THREE.MeshBasicMaterial({ color: 0x10b981, side: THREE.DoubleSide }),
+  );
+  bedRing.rotation.x = -Math.PI / 2;
+  bedRing.position.set(bedPos.x, 0.39, bedPos.z);
+  g.add(bedFrame, mattress, quilt, bedRing);
+  colliders.push({ minX: bx + 5.6, maxX: bx + 9.2, minZ: bz - 8.2, maxZ: bz - 4.2, height: 1.4 });
+
+  // Wardrobe / Almirah (South-West Living Room corner)
+  const wardrobePos = new THREE.Vector3(bx - 7.0, 0.36, bz + 5.2);
+  const almirah = new THREE.Mesh(new THREE.BoxGeometry(1.3, 3.1, 2.6), woodMat);
+  almirah.position.set(bx - 9.0, 1.9, bz + 5.2);
+  const almirahMirror = new THREE.Mesh(
+    new THREE.BoxGeometry(0.08, 2.2, 0.9),
+    new THREE.MeshStandardMaterial({ color: 0xbae6fd, metalness: 0.85, roughness: 0.15 }),
+  );
+  almirahMirror.position.set(bx - 8.32, 2.0, bz + 5.2);
+  const wardrobeRing = new THREE.Mesh(
+    new THREE.RingGeometry(1.0, 1.35, 24),
+    new THREE.MeshBasicMaterial({ color: 0x38bdf8, side: THREE.DoubleSide }),
+  );
+  wardrobeRing.rotation.x = -Math.PI / 2;
+  wardrobeRing.position.set(wardrobePos.x, 0.39, wardrobePos.z);
+  g.add(almirah, almirahMirror, wardrobeRing);
+  colliders.push({ minX: bx - 9.65, maxX: bx - 8.35, minZ: bz + 3.85, maxZ: bz + 6.55, height: 3.1 });
+
+  // Warm interior lighting registration
+  interiorLightSpots.push({ x: bx, y: 4.5, z: bz + 0.5, color: 0xffedd5, intensity: 22, distance: 26 });
+
+  scene.add(g);
+
+  return {
+    spawnPos: new THREE.Vector3(bx, 0.18, bz + 20.6),
+    pujaPos,
+    bedPos,
+    wardrobePos,
+    homeCenter: new THREE.Vector3(bx, 0.36, bz),
+    nameplateMesh,
+    updateNameplate: drawNameplate,
+  };
+}
+
 
 
 

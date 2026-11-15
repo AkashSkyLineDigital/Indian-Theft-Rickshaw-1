@@ -236,6 +236,17 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText('☪', bx, by + 0.5);
+      } else if (b.type === 'home') {
+        ctx.fillStyle = '#f59e0b';
+        ctx.strokeStyle = '#fef3c7';
+        ctx.lineWidth = 1.2;
+        ctx.fillRect(bx - 6, by - 6, 12, 12);
+        ctx.strokeRect(bx - 6, by - 6, 12, 12);
+        ctx.fillStyle = '#0b0e14';
+        ctx.font = 'bold 8px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('H', bx, by + 0.5);
       } else if (b.type === 'dog') {
         ctx.fillStyle = '#fbbf24';
         ctx.beginPath();
@@ -387,9 +398,9 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
         MAP (M)
       </div>
       <div className="absolute bottom-1 left-1.5 right-1.5 flex items-center justify-between text-[9px] font-mono-num text-slate-400 pointer-events-none">
+        <span>H:Home</span>
         <span>G:Gun</span>
         <span>B:Bank</span>
-        <span>₹:ATM</span>
         <span>+:Med</span>
       </div>
     </button>
