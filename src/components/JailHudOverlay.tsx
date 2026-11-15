@@ -34,6 +34,7 @@ interface JailHudOverlayProps {
   toasts: FloatingToast[];
   worldLabels: WorldLabelHud[];
   isTouchHud: boolean;
+  pointerLocked?: boolean;
   onSleepNight: () => void;
   onUseToilet: () => void;
   onSkipSentence: () => void;
@@ -59,6 +60,7 @@ export const JailHudOverlay: React.FC<JailHudOverlayProps> = ({
   toasts,
   worldLabels,
   isTouchHud,
+  pointerLocked = false,
   onSleepNight,
   onUseToilet,
   onSkipSentence,
@@ -87,7 +89,7 @@ export const JailHudOverlay: React.FC<JailHudOverlayProps> = ({
     if (!ctx) return;
 
     const size = canvas.width;
-    const pad = 10;
+    const pad = 8;
     const span = 44;
     const scale = (size - pad * 2) / span;
     const toPt = (wx: number, wz: number): [number, number] => [
@@ -104,7 +106,7 @@ export const JailHudOverlay: React.FC<JailHudOverlayProps> = ({
     ctx.fillStyle = isNightLockup ? '#111827' : '#182232';
     ctx.fillRect(x0, z0, x1 - x0, z1 - z0);
     ctx.strokeStyle = '#64748b';
-    ctx.lineWidth = 2.5;
+    ctx.lineWidth = 2;
     ctx.strokeRect(x0, z0, x1 - x0, z1 - z0);
 
     // Barracks Cell block footprint on West side
@@ -120,7 +122,7 @@ export const JailHudOverlay: React.FC<JailHudOverlayProps> = ({
     const stations: { wx: number; wz: number; color: string; label: string }[] = [
       { wx: JAIL_CX - 16.4, wz: JAIL_CZ - 7.5 - 2.1, color: '#38bdf8', label: '1' },
       { wx: JAIL_CX - 16.8, wz: JAIL_CZ - 7.5 + 3.2, color: '#22d3ee', label: 'T' },
-      { wx: JAIL_CX - 8.5, wz: JAIL_CZ - 0.3, color: '#10b981', label: '2' },
+      { wx: JAIL_CX - 8.5, wz: JAIL_CZ - 0.3, color: '#22c55e', label: '2' },
       { wx: JAIL_CX, wz: JAIL_CZ - 12.7, color: '#f59e0b', label: '3' },
       { wx: JAIL_CX + 18.2, wz: JAIL_CZ - 7.5, color: '#ef4444', label: '4' },
     ];
@@ -128,10 +130,10 @@ export const JailHudOverlay: React.FC<JailHudOverlayProps> = ({
       const [sx, sy] = toPt(s.wx, s.wz);
       ctx.fillStyle = s.color;
       ctx.beginPath();
-      ctx.arc(sx, sy, 5.5, 0, Math.PI * 2);
+      ctx.arc(sx, sy, 4.5, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = '#0b0e14';
-      ctx.font = 'bold 7px sans-serif';
+      ctx.font = 'bold 6px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(s.label, sx, sy + 0.5);
@@ -152,7 +154,7 @@ export const JailHudOverlay: React.FC<JailHudOverlayProps> = ({
       ctx.strokeStyle = '#0b0e14';
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.arc(ix, iy, inm.ally || inm.rival ? 4.2 : 2.8, 0, Math.PI * 2);
+      ctx.arc(ix, iy, inm.ally || inm.rival ? 3.5 : 2.4, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
     }
@@ -179,9 +181,9 @@ export const JailHudOverlay: React.FC<JailHudOverlayProps> = ({
 
       ctx.fillStyle = '#fef08a';
       ctx.strokeStyle = '#0b0e14';
-      ctx.lineWidth = 1.2;
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.arc(gx, gy, 3.6, 0, Math.PI * 2);
+      ctx.arc(gx, gy, 3.0, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
       ctx.restore();
@@ -194,12 +196,12 @@ export const JailHudOverlay: React.FC<JailHudOverlayProps> = ({
     ctx.rotate(-jail.playerYaw);
     ctx.fillStyle = '#ffffff';
     ctx.strokeStyle = '#0b0e14';
-    ctx.lineWidth = 1.4;
+    ctx.lineWidth = 1.2;
     ctx.beginPath();
-    ctx.moveTo(0, -6);
-    ctx.lineTo(4.5, 5);
-    ctx.lineTo(0, 2.5);
-    ctx.lineTo(-4.5, 5);
+    ctx.moveTo(0, -5);
+    ctx.lineTo(3.8, 4.2);
+    ctx.lineTo(0, 2);
+    ctx.lineTo(-3.8, 4.2);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
@@ -249,502 +251,512 @@ export const JailHudOverlay: React.FC<JailHudOverlayProps> = ({
                   : null;
 
   return (
-    <div className="fixed inset-0 z-20 pointer-events-none flex flex-col justify-between p-3 sm:p-4 overflow-hidden">
-      {/* 3D World Floating Station, Ally & Rival Labels */}
-      {worldLabels.map((lbl) => (
-        <button
-          key={lbl.id}
-          type="button"
-          onClick={(e) => handleLabelClick(e, lbl.jailStation, lbl.rivalId)}
-          style={{
-            transform: `translate3d(${lbl.screenX}px, ${lbl.screenY}px, 0) translate(-50%, -100%)`,
-          }}
-          className={`absolute top-0 left-0 pointer-events-auto px-2 py-1 bg-[#0B0E14]/92 hover:bg-[#171E2C] border text-center shadow-lg cursor-pointer ${
+    <>
+      {/* Subtle Center Crosshair Dot shown ONLY in First-Person View inside Central Jail */}
+      {firstPerson && pointerLocked && (
+        <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-[15]">
+          <div className="w-1.5 h-1.5 rounded-full bg-white/85 ring-1 ring-black/65 shadow-[0_0_4px_rgba(0,0,0,0.95)]" />
+        </div>
+      )}
+
+      {/* Layer 1 (z-[5]): 3D Floating World Labels strictly behind Jail HUD Sidebars */}
+      <div className="fixed inset-0 z-[5] pointer-events-none overflow-hidden">
+        {worldLabels.map((lbl) => {
+          const accent =
             lbl.jailStation === 'BUNK'
-              ? 'border-sky-400/80 text-sky-200'
+              ? 'border-sky-400/70 text-[#38BDF8]'
               : lbl.jailStation === 'TOILET'
-                ? 'border-cyan-400/80 text-cyan-200'
+                ? 'border-cyan-400/70 text-cyan-300'
                 : lbl.jailStation === 'WORKSHOP'
-                  ? 'border-emerald-400/80 text-emerald-200'
+                  ? 'border-emerald-400/70 text-[#22C55E]'
                   : lbl.jailStation === 'INMATE_ALLY'
-                    ? 'border-purple-400/85 text-purple-200'
+                    ? 'border-purple-400/70 text-purple-300'
                     : lbl.jailStation === 'INMATE_RIVAL'
-                      ? 'border-red-500 text-red-200'
+                      ? 'border-red-400/75 text-[#EF4444]'
                       : lbl.jailStation === 'WARDEN'
-                        ? 'border-amber-400/80 text-amber-200'
-                        : 'border-red-400/85 text-red-200'
-          }`}
-        >
-          <div className="text-[10px] font-display font-bold leading-tight">{lbl.title}</div>
-          <div className="text-[9px] font-mono-num opacity-90">{lbl.subtitle}</div>
-        </button>
-      ))}
+                        ? 'border-amber-400/70 text-[#FBBF24]'
+                        : 'border-red-400/70 text-red-300';
 
-      {/* Top Row: Left Jail Radar, Center Daily Schedule Clock, Right Action Menu */}
-      <div className="flex items-start justify-between gap-2 sm:gap-3">
-        {/* Top-Left Sentence HUD + Live Jail Yard Map */}
-        <div className="flex flex-col gap-2">
-          <div className="pointer-events-auto w-72 sm:w-84 bg-[#0B0E14]/94 border border-slate-700/90 shadow-xl p-3 flex flex-col gap-2">
-            <div className="flex items-center justify-between gap-2">
-              <span className="font-display text-xs font-extrabold tracking-wider text-amber-400 uppercase">
-                Bharat Central Jail
-              </span>
-              <span className="text-[11px] font-mono-num text-slate-300">
-                Day {timeOfDay.dayCount} · {timeOfDay.formattedTime}
-              </span>
-            </div>
+          return (
+            <button
+              key={lbl.id}
+              type="button"
+              onClick={(e) => handleLabelClick(e, lbl.jailStation, lbl.rivalId)}
+              style={{
+                transform: `translate3d(${lbl.screenX}px, ${lbl.screenY}px, 0) translate(-50%, -100%)`,
+              }}
+              className={`absolute top-0 left-0 pointer-events-auto px-2 py-0.5 hud-glass-subtle hover:bg-[rgba(24,30,42,0.65)] rounded-md text-center shadow-md cursor-pointer transition-colors ${
+                lbl.isClosest ? accent : 'border-white/[0.14]'
+              }`}
+            >
+              <div className="text-[10px] font-display font-bold text-slate-100 leading-tight whitespace-nowrap hud-text-shadow">
+                {lbl.title}
+              </div>
+              {lbl.isClosest && lbl.subtitle && (
+                <div className={`text-[9px] font-mono-num whitespace-nowrap hud-text-shadow ${accent}`}>
+                  {lbl.subtitle}
+                </div>
+              )}
+            </button>
+          );
+        })}
+      </div>
 
-            <div className="flex items-stretch gap-2.5">
-              <div className="shrink-0 flex flex-col items-center gap-1">
-                <canvas
-                  ref={mapRef}
-                  width={120}
-                  height={120}
-                  className="border border-slate-700 bg-[#090d14]"
-                />
-                <span className="text-[9px] font-mono-num text-slate-400">
-                  1:Bunk T:WC 2:Work 4:Gate
+      {/* Layer 2 (z-20): Compact Translucent Jail HUD Sidebars & Top Safe-Area Shift Bar */}
+      <div className="fixed inset-0 z-20 pointer-events-none flex flex-col justify-between px-2.5 pb-2.5 pt-[max(14px,env(safe-area-inset-top))] sm:px-4 sm:pb-4 overflow-hidden">
+        {/* Top Row: Compact Left Sidebar (~30% narrower), Top-Center Schedule Ribbon, Compact Right Actions (~30% narrower) */}
+        <div className="flex items-start justify-between gap-2">
+          {/* Top-Left Compact Sentence HUD + Radar + Rivalry */}
+          <div className="flex flex-col gap-1.5">
+            <div className="pointer-events-auto w-[min(39vw,210px)] sm:w-[234px] max-h-[60vh] overflow-y-auto hud-glass-jail rounded-xl shadow-xl p-2 sm:p-2.5 flex flex-col gap-1.5 hud-text-shadow">
+              <div className="flex items-center justify-between gap-1">
+                <span className="font-display text-[10px] sm:text-[11px] font-extrabold tracking-wider text-[#FBBF24] uppercase truncate">
+                  Central Jail
+                </span>
+                <span className="text-[9px] sm:text-[10px] font-mono-num text-slate-200 shrink-0">
+                  D{timeOfDay.dayCount} · {timeOfDay.formattedTime}
                 </span>
               </div>
 
-              <div className="flex-1 flex flex-col justify-between gap-1.5 text-[11px] font-mono-num">
-                <div className="bg-[#121826] border border-slate-800 px-2 py-1.5">
-                  <div className="text-[9px] text-slate-400 uppercase">Sentence Left</div>
-                  <div className="font-bold text-amber-300">
-                    {jail.remainingDays.toFixed(2)}d ({jail.remainingHoursLabel})
+              <div className="flex flex-col sm:flex-row items-stretch gap-1.5">
+                <div className="shrink-0 flex flex-col items-center gap-0.5 self-center sm:self-auto">
+                  <canvas
+                    ref={mapRef}
+                    width={96}
+                    height={96}
+                    className="w-[74px] h-[74px] sm:w-[86px] sm:h-[86px] rounded border border-white/15 bg-[#090d14]/85"
+                  />
+                  <span className="hidden sm:inline text-[8px] font-mono-num text-slate-300/80">
+                    1:Bed T:WC 2:Work 4:Gate
+                  </span>
+                </div>
+
+                <div className="flex-1 flex flex-col justify-between gap-1 text-[10px] font-mono-num">
+                  <div className="bg-white/[0.05] border border-white/10 rounded px-1.5 py-1">
+                    <div className="text-[8px] text-slate-300/80 uppercase">Sentence</div>
+                    <div className="font-bold text-[#FBBF24] leading-tight">
+                      {jail.remainingDays.toFixed(2)}d ({jail.remainingHoursLabel})
+                    </div>
+                  </div>
+                  <div className="bg-white/[0.05] border border-white/10 rounded px-1.5 py-0.5 flex justify-between">
+                    <span className="text-slate-300/80">Stars</span>
+                    <strong className="text-[#EF4444]">{jail.starsAtArrest}★</strong>
+                  </div>
+                  <div className="bg-white/[0.05] border border-white/10 rounded px-1.5 py-0.5 flex justify-between">
+                    <span className="text-slate-300/80">Cash</span>
+                    <strong className="text-[#EAB308]">{formatRs(cash)}</strong>
+                  </div>
+                  <div className="bg-white/[0.05] border border-white/10 rounded px-1.5 py-0.5 flex justify-between">
+                    <span className="text-slate-300/80">Bank</span>
+                    <strong className="text-[#38BDF8]">{formatRs(bankSavings)}</strong>
                   </div>
                 </div>
-                <div className="bg-[#121826] border border-slate-800 px-2 py-1 flex justify-between">
-                  <span className="text-slate-400">Arrest:</span>
-                  <strong className="text-red-300">{jail.starsAtArrest}★</strong>
-                </div>
-                <div className="bg-[#121826] border border-slate-800 px-2 py-1 flex justify-between">
-                  <span className="text-slate-400">Cash:</span>
-                  <strong className="text-emerald-300">{formatRs(cash)}</strong>
-                </div>
-                <div className="bg-[#121826] border border-slate-800 px-2 py-1 flex justify-between">
-                  <span className="text-slate-400">Bank:</span>
-                  <strong className="text-sky-300">{formatRs(bankSavings)}</strong>
-                </div>
               </div>
+
+              {jail.escrowedWeaponsCount > 0 && (
+                <div className="flex items-center gap-1 px-1.5 py-1 bg-sky-500/15 border border-sky-400/35 rounded text-[9px] font-mono-num text-sky-200">
+                  <ShieldCheck className="w-3 h-3 text-[#38BDF8] shrink-0" />
+                  <span className="leading-tight">
+                    {jail.escrowedWeaponsCount} licensed gun(s) held in escrow
+                  </span>
+                </div>
+              )}
+
+              {jail.distractionActiveSec > 0 && (
+                <div className="flex items-center gap-1 px-1.5 py-1 bg-purple-500/25 border border-purple-400/60 rounded text-[10px] font-mono-num font-bold text-purple-100">
+                  <Megaphone className="w-3 h-3 text-purple-200 shrink-0" />
+                  <span className="leading-tight">
+                    CHHOTU ACTIVE ({jail.distractionActiveSec}s) — RUN TO GATE [4]!
+                  </span>
+                </div>
+              )}
+
+              {jail.spottedByGuard && (
+                <div className="flex items-center gap-1 px-1.5 py-1 bg-red-500/25 border border-red-400/65 rounded text-[10px] font-mono-num font-bold text-red-100 animate-pulse">
+                  <AlertTriangle className="w-3 h-3 text-[#EF4444] shrink-0" />
+                  <span className="leading-tight">CONE ON EAST GATE! Use Distraction [5]</span>
+                </div>
+              )}
+
+              {busy && (
+                <div className="flex flex-col gap-1 bg-white/[0.06] border border-amber-400/45 rounded p-1.5">
+                  <div className="flex items-center justify-between text-[10px] font-mono-num text-[#FBBF24] font-bold">
+                    <span>
+                      {jail.activeTaskKind === 'WORK' ? 'Workshop Shift...' : 'Picking Lock...'}
+                    </span>
+                    <span>{Math.round(jail.activeTaskPct)}%</span>
+                  </div>
+                  <div className="w-full h-1 bg-black/45 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full transition-all duration-75 ${
+                        jail.activeTaskKind === 'ESCAPE' ? 'bg-[#EF4444]' : 'bg-[#22C55E]'
+                      }`}
+                      style={{ width: `${Math.min(100, Math.max(0, jail.activeTaskPct))}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {jail.rivals.length > 0 && (
+                <div className="border-t border-white/10 pt-1.5 flex flex-col gap-1">
+                  <div className="flex items-center justify-between text-[9px] font-mono-num text-[#EF4444] font-bold uppercase">
+                    <span className="flex items-center gap-1">
+                      <Swords className="w-3 h-3" /> Rivalry
+                    </span>
+                    <span className="text-[8px] text-slate-300/80">[J] Hit · [6] Bribe</span>
+                  </div>
+                  {jail.rivals.map((rv) => (
+                    <div
+                      key={rv.id}
+                      className={`flex items-center justify-between gap-1 px-1.5 py-1 rounded border text-[9px] font-mono-num ${
+                        rv.chasing
+                          ? 'bg-red-500/25 border-red-400/60 text-red-100'
+                          : rv.bribed
+                            ? 'bg-emerald-500/15 border-emerald-400/45 text-emerald-200'
+                            : rv.defeated
+                              ? 'bg-white/[0.04] border-white/10 text-slate-400'
+                              : 'bg-white/[0.05] border-white/10 text-slate-100'
+                      }`}
+                    >
+                      <div className="min-w-0 truncate">
+                        <span className="font-bold">{rv.name}</span>
+                        <span className="ml-1 text-[8px] opacity-85">
+                          {rv.defeated
+                            ? 'KO'
+                            : rv.bribed
+                              ? 'Truce'
+                              : rv.chasing
+                                ? `CHASE ${rv.hp}/${rv.maxHp}`
+                                : `${rv.hp}/${rv.maxHp}`}
+                        </span>
+                      </div>
+                      {!rv.defeated && !rv.bribed && (
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.currentTarget.blur();
+                              onAttack();
+                            }}
+                            className="px-1.5 py-0.5 bg-[#EF4444] hover:bg-red-400 rounded text-white font-bold text-[8px] cursor-pointer"
+                          >
+                            Hit
+                          </button>
+                          <button
+                            type="button"
+                            disabled={cash < rv.bribeCost}
+                            onClick={(e) => {
+                              e.currentTarget.blur();
+                              onBribeRival(rv.id);
+                            }}
+                            className="px-1.5 py-0.5 bg-[#F59E0B] hover:bg-[#FBBF24] disabled:bg-white/10 disabled:text-white/30 rounded text-[#0E1118] font-bold text-[8px] cursor-pointer"
+                          >
+                            {formatRs(rv.bribeCost)}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {jail.statusBanner && (
+                <div className="text-[10px] text-slate-100 leading-snug border-t border-white/10 pt-1">
+                  {jail.statusBanner}
+                </div>
+              )}
             </div>
 
-            {jail.escrowedWeaponsCount > 0 && (
-              <div className="flex items-center gap-1.5 px-2 py-1 bg-sky-950/55 border border-sky-500/40 text-[10px] font-mono-num text-sky-200">
-                <ShieldCheck className="w-3.5 h-3.5 text-sky-300 shrink-0" />
-                <span>
-                  {jail.escrowedWeaponsCount} licensed gun(s) held in escrow — returned on release!
-                </span>
-              </div>
-            )}
-
-            {jail.distractionActiveSec > 0 && (
-              <div className="flex items-center gap-1.5 px-2 py-1.5 bg-purple-950/90 border border-purple-400 text-[11px] font-mono-num font-bold text-purple-100">
-                <Megaphone className="w-3.5 h-3.5 text-purple-300 shrink-0" />
-                <span>
-                  CHHOTU DISTRACTION ACTIVE ({jail.distractionActiveSec}s) — RUN TO EAST GATE [4/E]!
-                </span>
-              </div>
-            )}
-
-            {jail.spottedByGuard && (
-              <div className="flex items-center gap-1.5 px-2 py-1.5 bg-red-950/95 border border-red-500 text-[11px] font-mono-num font-bold text-red-200 animate-pulse">
-                <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />
-                <span>GUARD CONE WATCHING EAST GATE! Wait or use Chhotu Distraction [5]!</span>
-              </div>
-            )}
-
-            {busy && (
-              <div className="flex flex-col gap-1 bg-[#121826] border border-amber-500/60 p-2">
-                <div className="flex items-center justify-between text-[11px] font-mono-num text-amber-200 font-bold">
-                  <span>
-                    {jail.activeTaskKind === 'WORK'
-                      ? 'Carpentry / Gardening Shift...'
-                      : 'Picking Gate / Grate Lock...'}
-                  </span>
-                  <span>{Math.round(jail.activeTaskPct)}%</span>
-                </div>
-                <div className="w-full h-1.5 bg-slate-900 overflow-hidden">
+            {toasts.length > 0 && (
+              <div className="flex flex-col gap-1 max-w-[234px]">
+                {toasts.map((t) => (
                   <div
-                    className={`h-full transition-all duration-75 ${
-                      jail.activeTaskKind === 'ESCAPE' ? 'bg-red-500' : 'bg-emerald-400'
-                    }`}
-                    style={{ width: `${Math.min(100, Math.max(0, jail.activeTaskPct))}%` }}
-                  />
-                </div>
-              </div>
-            )}
-
-            {jail.rivals.length > 0 && (
-              <div className="border-t border-slate-800 pt-1.5 flex flex-col gap-1">
-                <div className="flex items-center justify-between text-[10px] font-mono-num text-red-300 font-bold uppercase">
-                  <span className="flex items-center gap-1">
-                    <Swords className="w-3 h-3" /> Inmate Rivalry
-                  </span>
-                  <span className="text-[9px] text-slate-400">[Click/J] Fight · [6/B] Bribe</span>
-                </div>
-                {jail.rivals.map((rv) => (
-                  <div
-                    key={rv.id}
-                    className={`flex items-center justify-between gap-2 px-2 py-1 border text-[10px] font-mono-num ${
-                      rv.chasing
-                        ? 'bg-red-950/85 border-red-500 text-red-100'
-                        : rv.bribed
-                          ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-200'
-                          : rv.defeated
-                            ? 'bg-slate-900/70 border-slate-800 text-slate-400'
-                            : 'bg-[#121826] border-slate-800 text-slate-200'
+                    key={t.id}
+                    className={`px-2.5 py-1 hud-glass rounded-lg text-[11px] font-medium hud-text-shadow ${
+                      t.tone === 'cash'
+                        ? 'border-emerald-400/50 text-[#22C55E]'
+                        : t.tone === 'warn'
+                          ? 'border-red-400/50 text-red-200'
+                          : 'text-slate-100'
                     }`}
                   >
-                    <div className="min-w-0 truncate">
-                      <span className="font-bold">{rv.name}</span>
-                      <span className="ml-1.5 text-[9px] opacity-85">
-                        {rv.defeated
-                          ? 'KO'
-                          : rv.bribed
-                            ? 'Truce'
-                            : rv.chasing
-                              ? `CHASING ${rv.hp}/${rv.maxHp}`
-                              : `${rv.hp}/${rv.maxHp} HP`}
-                      </span>
-                    </div>
-                    {!rv.defeated && !rv.bribed && (
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.currentTarget.blur();
-                            onAttack();
-                          }}
-                          className="px-1.5 py-0.5 bg-red-700 hover:bg-red-600 text-white font-bold text-[9px] cursor-pointer"
-                        >
-                          Punch
-                        </button>
-                        <button
-                          type="button"
-                          disabled={cash < rv.bribeCost}
-                          onClick={(e) => {
-                            e.currentTarget.blur();
-                            onBribeRival(rv.id);
-                          }}
-                          className="px-1.5 py-0.5 bg-amber-500 hover:bg-amber-400 disabled:bg-slate-800 disabled:text-slate-500 text-[#0B0E14] font-bold text-[9px] cursor-pointer"
-                        >
-                          {formatRs(rv.bribeCost)}
-                        </button>
-                      </div>
-                    )}
+                    {t.text}
                   </div>
                 ))}
               </div>
             )}
-
-            {jail.statusBanner && (
-              <div className="text-[11px] text-slate-200 leading-snug border-t border-slate-800 pt-1.5">
-                {jail.statusBanner}
-              </div>
-            )}
           </div>
 
-          {/* Live Toasts inside Jail */}
-          {toasts.length > 0 && (
-            <div className="flex flex-col gap-1 max-w-xs">
-              {toasts.map((t) => (
-                <div
-                  key={t.id}
-                  className={`px-3 py-1.5 border text-xs font-medium shadow-md ${
-                    t.tone === 'cash'
-                      ? 'bg-emerald-950/95 border-emerald-500 text-emerald-200'
-                      : t.tone === 'warn'
-                        ? 'bg-red-950/95 border-red-500 text-red-200'
-                        : 'bg-slate-900/95 border-slate-600 text-slate-100'
-                  }`}
+          {/* Top-Center Daily Prison Schedule Timeline (Safe-Area Padded, Translucent) */}
+          <div className="hidden md:flex flex-col items-center gap-1 max-w-md hud-glass-jail rounded-xl px-2.5 py-1.5 shadow-lg hud-text-shadow mt-0.5">
+            <div className="grid grid-cols-3 gap-1.5 w-full text-[9px] font-mono-num">
+              <div
+                className={`px-2 py-0.5 rounded border text-center ${
+                  isWorkShift
+                    ? 'bg-emerald-500/20 border-emerald-400/60 text-[#22C55E] font-bold'
+                    : 'bg-white/[0.04] border-white/10 text-slate-300/70'
+                }`}
+              >
+                <div>06:00–17:00</div>
+                <div>WORK SHIFT</div>
+              </div>
+              <div
+                className={`px-2 py-0.5 rounded border text-center ${
+                  isFreeYard
+                    ? 'bg-amber-500/20 border-amber-400/60 text-[#FBBF24] font-bold'
+                    : 'bg-white/[0.04] border-white/10 text-slate-300/70'
+                }`}
+              >
+                <div>17:00–20:30</div>
+                <div>FREE YARD</div>
+              </div>
+              <div
+                className={`px-2 py-0.5 rounded border text-center ${
+                  isNightLockup
+                    ? 'bg-sky-500/20 border-sky-400/60 text-[#38BDF8] font-bold'
+                    : 'bg-white/[0.04] border-white/10 text-slate-300/70'
+                }`}
+              >
+                <div>20:30–06:00</div>
+                <div>NIGHT LOCKUP</div>
+              </div>
+            </div>
+            <div className="text-[10px] text-center text-slate-100 leading-tight">{jail.scheduleSub}</div>
+          </div>
+
+          {/* Top-Right Compact Controls & Routine Actions (~30% narrower) */}
+          <div className="pointer-events-auto flex flex-col items-end gap-1.5">
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  onToggleFirstPerson();
+                }}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-mono-num cursor-pointer hud-text-shadow ${
+                  firstPerson
+                    ? 'bg-[#38BDF8] text-[#0E1118] font-bold'
+                    : 'hud-glass-subtle hover:bg-[rgba(24,30,42,0.58)] text-slate-100'
+                }`}
+              >
+                <Eye className="w-3 h-3" />
+                <span>{firstPerson ? 'FPV ON' : 'FPV (C)'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  onOpenSettings();
+                }}
+                className="flex items-center gap-1 px-2.5 py-1 hud-glass-subtle hover:bg-[rgba(24,30,42,0.58)] rounded-full text-[11px] font-mono-num text-slate-100 cursor-pointer hud-text-shadow"
+              >
+                <Settings className="w-3 h-3 text-[#FBBF24]" />
+                <span>MENU</span>
+              </button>
+            </div>
+
+            <div className="w-[min(39vw,196px)] sm:w-[214px] max-h-[58vh] overflow-y-auto hud-glass-jail rounded-xl shadow-xl p-2 flex flex-col gap-1.5 hud-text-shadow">
+              <div className="flex items-center justify-between border-b border-white/10 pb-1">
+                <span className="text-[9px] font-display font-bold tracking-wider text-[#FBBF24] uppercase truncate">
+                  Routine &amp; Escape
+                </span>
+              </div>
+
+              {/* 1. Sleep Night & Toilet */}
+              <div className="grid grid-cols-3 gap-1">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    onSleepNight();
+                  }}
+                  className="col-span-2 flex items-center gap-1.5 px-2 py-1.5 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-400/45 rounded-lg text-left text-sky-100 cursor-pointer disabled:opacity-50"
                 >
-                  {t.text}
+                  <BedDouble className="w-3.5 h-3.5 text-[#38BDF8] shrink-0" />
+                  <div className="min-w-0">
+                    <div className="font-bold text-[10px] leading-tight truncate">[1] Sleep (-1d)</div>
+                    <div className="text-[8px] text-sky-200/85 truncate">+Day &amp; FD</div>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    onUseToilet();
+                  }}
+                  className="flex flex-col items-center justify-center px-1 py-1 bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/40 rounded-lg text-cyan-100 cursor-pointer disabled:opacity-50"
+                >
+                  <Droplets className="w-3 h-3 text-cyan-300" />
+                  <span className="text-[9px] font-bold">Toilet</span>
+                </button>
+              </div>
+
+              {/* 2. Workshop Shift */}
+              <button
+                type="button"
+                disabled={busy || isNightLockup}
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  onPerformWork();
+                }}
+                className="flex items-center justify-between gap-1.5 px-2 py-1.5 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-400/45 rounded-lg text-left text-emerald-100 cursor-pointer disabled:opacity-50"
+              >
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <Hammer className="w-3.5 h-3.5 text-[#22C55E] shrink-0" />
+                  <div className="min-w-0">
+                    <div className="font-bold text-[10px] truncate">[2] Work ({jail.workCount})</div>
+                    <div className="text-[8px] text-emerald-200/85 truncate">
+                      +{formatRs(JAIL_WORK_WAGE_INR)} &amp; -50% Saza
+                    </div>
+                  </div>
                 </div>
-              ))}
+                {jail.workShiftDoneToday && (
+                  <span className="text-[8px] font-mono-num px-1 bg-emerald-500/25 rounded text-emerald-200 shrink-0">
+                    OK
+                  </span>
+                )}
+              </button>
+
+              {/* 5. Inmate Ally Distraction */}
+              <button
+                type="button"
+                disabled={busy || isNightLockup || jail.distractionActiveSec > 0 || jail.distractionCooldownSec > 0}
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  onTriggerDistraction();
+                }}
+                className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-left cursor-pointer disabled:opacity-50 ${
+                  isFreeYard
+                    ? 'bg-purple-500/25 hover:bg-purple-500/35 border-purple-400/65 text-purple-100'
+                    : 'bg-white/[0.06] hover:bg-white/[0.12] border-purple-400/35 text-purple-200'
+                }`}
+              >
+                <Megaphone className="w-3.5 h-3.5 text-purple-300 shrink-0" />
+                <div className="min-w-0">
+                  <div className="font-bold text-[10px] truncate">[5] Chhotu Distract</div>
+                  <div className="text-[8px] text-purple-200/85 truncate">
+                    {jail.distractionActiveSec > 0
+                      ? `Active ${jail.distractionActiveSec}s!`
+                      : jail.distractionCooldownSec > 0
+                        ? `Cooldown ${jail.distractionCooldownSec}s`
+                        : isFreeYard
+                          ? 'Free Yard! Pulls guards 14s'
+                          : 'Best 17:00–20:30 Yard'}
+                  </div>
+                </div>
+              </button>
+
+              {/* 3. Bribe Jailer */}
+              <div className="bg-amber-500/12 border border-amber-400/40 rounded-lg p-1.5 flex flex-col gap-1">
+                <div className="text-[10px] font-bold text-amber-200 flex items-center justify-between gap-1">
+                  <span className="truncate">[3] Bribe Jailer</span>
+                  <span className="font-mono-num text-[#FBBF24] shrink-0">{formatRs(jail.wardenBribeCost)}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-1">
+                  <button
+                    type="button"
+                    disabled={busy || !canBribeCash}
+                    onClick={(e) => {
+                      e.currentTarget.blur();
+                      onBribeWarden('cash');
+                    }}
+                    className={`flex items-center justify-center gap-1 py-1 rounded text-[9px] font-bold uppercase cursor-pointer ${
+                      canBribeCash && !busy
+                        ? 'bg-[#F59E0B] hover:bg-[#FBBF24] text-[#0E1118]'
+                        : 'bg-white/10 text-white/30 cursor-not-allowed'
+                    }`}
+                  >
+                    <Banknote className="w-2.5 h-2.5" />
+                    <span>Cash</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy || !canBribeBank}
+                    onClick={(e) => {
+                      e.currentTarget.blur();
+                      onBribeWarden('bank');
+                    }}
+                    className={`flex items-center justify-center gap-1 py-1 rounded text-[9px] font-bold uppercase cursor-pointer ${
+                      canBribeBank && !busy
+                        ? 'bg-[#38BDF8] hover:bg-sky-300 text-[#0E1118]'
+                        : 'bg-white/10 text-white/30 cursor-not-allowed'
+                    }`}
+                  >
+                    <Landmark className="w-2.5 h-2.5" />
+                    <span>Bank</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* 4. Weak East Gate / Grate Escape */}
+              <button
+                type="button"
+                disabled={busy || isNightLockup}
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  onStartPrisonBreak();
+                }}
+                className={`flex items-center justify-between gap-1.5 px-2 py-1.5 rounded-lg border text-left cursor-pointer disabled:opacity-50 ${
+                  atEastGate
+                    ? 'bg-[#EF4444]/85 hover:bg-red-500 border-red-200 text-white animate-pulse'
+                    : 'bg-red-500/20 hover:bg-red-500/30 border-red-400/50 text-red-100'
+                }`}
+              >
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <KeyRound className="w-3.5 h-3.5 text-red-200 shrink-0" />
+                  <div className="min-w-0">
+                    <div className="font-bold text-[10px] truncate">
+                      {atEastGate ? '[4] PICK LOCK NOW!' : '[4] Prison Break'}
+                    </div>
+                    <div className="text-[8px] text-red-100/85 truncate">
+                      {atEastGate ? 'Hold while cones clear' : 'East Gate · Free Yard'}
+                    </div>
+                  </div>
+                </div>
+                <ShieldAlert className="w-3 h-3 text-red-200 shrink-0" />
+              </button>
+
+              <button
+                type="button"
+                disabled={busy}
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  onSkipSentence();
+                }}
+                className="flex items-center justify-center gap-1 py-1 bg-white/[0.06] hover:bg-white/[0.14] border border-white/10 rounded-lg text-[9px] font-mono-num text-slate-200 cursor-pointer disabled:opacity-50"
+              >
+                <Clock className="w-2.5 h-2.5 text-[#38BDF8]" />
+                <span className="truncate">Fast-Forward Sentence</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Bottom Inmate Tip Bubble, Prompt & Compact Controls Strip */}
+        <div className="flex flex-col items-center gap-1.5 hud-text-shadow">
+          {jail.nearInmateDialogue && (
+            <div className="max-w-lg px-3.5 py-1.5 hud-glass border-purple-400/50 rounded-xl shadow-lg flex items-start gap-2">
+              <MessageSquareText className="w-3.5 h-3.5 text-purple-300 shrink-0 mt-0.5" />
+              <div className="text-xs leading-snug">
+                <span className="font-bold text-purple-300">{jail.nearInmateDialogue.name}: </span>
+                <span className="text-slate-100">{jail.nearInmateDialogue.text}</span>
+              </div>
+            </div>
+          )}
+          {stationPrompt && (
+            <div className="px-3.5 py-1.5 hud-glass border-amber-400/60 rounded-full text-[11px] sm:text-xs font-mono-num font-bold text-[#FBBF24] shadow-lg text-center">
+              {stationPrompt}
+            </div>
+          )}
+          {!isTouchHud && (
+            <div className="hidden sm:block px-3 py-0.5 hud-glass-subtle rounded-full text-[10px] font-mono-num text-slate-200/85">
+              WASD Walk · Drag Look · [Space] Jump · [LMB/J] Fight · [6/B] Bribe · [E] Action · [1-5] Quick · [C] FPV
             </div>
           )}
         </div>
-
-        {/* Top-Center Daily Prison Schedule Timeline */}
-        <div className="hidden md:flex flex-col items-center gap-1.5 max-w-md bg-[#0B0E14]/92 border border-slate-700/90 px-3 py-2 shadow-xl">
-          <div className="grid grid-cols-3 gap-1.5 w-full text-[10px] font-mono-num">
-            <div
-              className={`px-2 py-1 border text-center ${
-                isWorkShift
-                  ? 'bg-emerald-950/90 border-emerald-400 text-emerald-200 font-bold'
-                  : 'bg-slate-900/60 border-slate-800 text-slate-400'
-              }`}
-            >
-              <div>06:00–17:00</div>
-              <div>WORK SHIFT</div>
-            </div>
-            <div
-              className={`px-2 py-1 border text-center ${
-                isFreeYard
-                  ? 'bg-amber-950/90 border-amber-400 text-amber-200 font-bold'
-                  : 'bg-slate-900/60 border-slate-800 text-slate-400'
-              }`}
-            >
-              <div>17:00–20:30</div>
-              <div>FREE YARD</div>
-            </div>
-            <div
-              className={`px-2 py-1 border text-center ${
-                isNightLockup
-                  ? 'bg-sky-950/90 border-sky-400 text-sky-200 font-bold'
-                  : 'bg-slate-900/60 border-slate-800 text-slate-400'
-              }`}
-            >
-              <div>20:30–06:00</div>
-              <div>NIGHT LOCKUP</div>
-            </div>
-          </div>
-          <div className="text-[10px] text-center text-slate-200 leading-snug">{jail.scheduleSub}</div>
-        </div>
-
-        {/* Top-Right Controls & Living Prison Actions */}
-        <div className="pointer-events-auto flex flex-col items-end gap-2">
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.currentTarget.blur();
-                onToggleFirstPerson();
-              }}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 border text-xs font-mono-num cursor-pointer ${
-                firstPerson
-                  ? 'bg-sky-600 hover:bg-sky-500 border-sky-400 text-white'
-                  : 'bg-[#0B0E14]/94 hover:bg-slate-800 border-slate-700 text-slate-200'
-              }`}
-            >
-              <Eye className="w-3.5 h-3.5" />
-              <span>{firstPerson ? 'FPV ON (C)' : 'FPV (C)'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.currentTarget.blur();
-                onOpenSettings();
-              }}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#0B0E14]/94 hover:bg-slate-800 border border-slate-700 text-xs font-mono-num text-slate-200 cursor-pointer"
-            >
-              <Settings className="w-3.5 h-3.5 text-amber-400" />
-              <span>MENU (ESC)</span>
-            </button>
-          </div>
-
-          <div className="w-64 sm:w-74 bg-[#0B0E14]/94 border border-slate-700/90 shadow-xl p-2.5 flex flex-col gap-1.5">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-1">
-              <span className="text-[10px] font-display font-bold tracking-wider text-slate-200 uppercase">
-                Daily Routine &amp; Escape
-              </span>
-              <span className="text-[9px] font-mono-num text-slate-400">Click / Drag to look</span>
-            </div>
-
-            {/* 1. Sleep Night on Bunk Bed (+FD Interest) & Cell Toilet */}
-            <div className="grid grid-cols-3 gap-1.5">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={(e) => {
-                  e.currentTarget.blur();
-                  onSleepNight();
-                }}
-                className="col-span-2 flex items-center gap-2 px-2 py-1.5 bg-sky-900/75 hover:bg-sky-800 border border-sky-500/60 text-left text-xs text-sky-100 cursor-pointer disabled:opacity-50"
-              >
-                <BedDouble className="w-3.5 h-3.5 text-sky-300 shrink-0" />
-                <div>
-                  <div className="font-bold text-[11px]">[1] Sleep Night (-1d)</div>
-                  <div className="text-[9px] text-sky-300">+Calendar Day &amp; FD Interest</div>
-                </div>
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={(e) => {
-                  e.currentTarget.blur();
-                  onUseToilet();
-                }}
-                className="flex flex-col items-center justify-center px-1.5 py-1.5 bg-cyan-950/75 hover:bg-cyan-900 border border-cyan-500/50 text-cyan-100 cursor-pointer disabled:opacity-50"
-              >
-                <Droplets className="w-3.5 h-3.5 text-cyan-300" />
-                <span className="text-[10px] font-bold">Toilet</span>
-              </button>
-            </div>
-
-            {/* 2. Workshop Shift */}
-            <button
-              type="button"
-              disabled={busy || isNightLockup}
-              onClick={(e) => {
-                e.currentTarget.blur();
-                onPerformWork();
-              }}
-              className="flex items-center justify-between gap-2 px-2.5 py-1.5 bg-emerald-900/75 hover:bg-emerald-800 border border-emerald-500/60 text-left text-xs text-emerald-100 cursor-pointer disabled:opacity-50"
-            >
-              <div className="flex items-center gap-2">
-                <Hammer className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
-                <div>
-                  <div className="font-bold text-[11px]">
-                    [2] Workshop Kaam ({jail.workCount} done)
-                  </div>
-                  <div className="text-[9px] text-emerald-300">
-                    Carpentry/Garden: +{formatRs(JAIL_WORK_WAGE_INR)} &amp; -50% Saza
-                  </div>
-                </div>
-              </div>
-              {jail.workShiftDoneToday && (
-                <span className="text-[9px] font-mono-num px-1 bg-emerald-500/20 border border-emerald-400/50 text-emerald-200">
-                  SHIFT OK
-                </span>
-              )}
-            </button>
-
-            {/* 5. Inmate Ally Distraction */}
-            <button
-              type="button"
-              disabled={busy || isNightLockup || jail.distractionActiveSec > 0 || jail.distractionCooldownSec > 0}
-              onClick={(e) => {
-                e.currentTarget.blur();
-                onTriggerDistraction();
-              }}
-              className={`flex items-center justify-between gap-2 px-2.5 py-1.5 border text-left text-xs cursor-pointer disabled:opacity-50 ${
-                isFreeYard
-                  ? 'bg-purple-900/85 hover:bg-purple-800 border-purple-400 text-purple-100'
-                  : 'bg-slate-900/80 hover:bg-slate-800 border-purple-500/40 text-purple-200'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Megaphone className="w-3.5 h-3.5 text-purple-300 shrink-0" />
-                <div>
-                  <div className="font-bold text-[11px]">[5] Chhotu Guard Distraction</div>
-                  <div className="text-[9px] text-purple-300">
-                    {jail.distractionActiveSec > 0
-                      ? `Active: ${jail.distractionActiveSec}s left — run to East Gate!`
-                      : jail.distractionCooldownSec > 0
-                        ? `Cooldown: ${jail.distractionCooldownSec}s`
-                        : isFreeYard
-                          ? 'Free Yard Window! Pulls guards away for 14s'
-                          : 'Best used during 17:00–20:30 Free Yard Hour'}
-                  </div>
-                </div>
-              </div>
-            </button>
-
-            {/* 3. Bribe Jailer */}
-            <div className="bg-amber-950/55 border border-amber-500/50 p-2 flex flex-col gap-1">
-              <div className="text-[11px] font-bold text-amber-200 flex items-center justify-between">
-                <span>[3] Bribe Jailer Mahendra</span>
-                <span className="font-mono-num text-amber-300">{formatRs(jail.wardenBribeCost)}</span>
-              </div>
-              <div className="text-[9px] text-amber-300/90">
-                23:30 Night North Gate exit · 35% chance of 2★
-              </div>
-              <div className="grid grid-cols-2 gap-1.5">
-                <button
-                  type="button"
-                  disabled={busy || !canBribeCash}
-                  onClick={(e) => {
-                    e.currentTarget.blur();
-                    onBribeWarden('cash');
-                  }}
-                  className={`flex items-center justify-center gap-1 py-1 text-[10px] font-bold uppercase cursor-pointer ${
-                    canBribeCash && !busy
-                      ? 'bg-amber-500 hover:bg-amber-400 text-[#0B0E14]'
-                      : 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                  }`}
-                >
-                  <Banknote className="w-3 h-3" />
-                  <span>Pay Cash</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={busy || !canBribeBank}
-                  onClick={(e) => {
-                    e.currentTarget.blur();
-                    onBribeWarden('bank');
-                  }}
-                  className={`flex items-center justify-center gap-1 py-1 text-[10px] font-bold uppercase cursor-pointer ${
-                    canBribeBank && !busy
-                      ? 'bg-sky-500 hover:bg-sky-400 text-[#0B0E14]'
-                      : 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                  }`}
-                >
-                  <Landmark className="w-3 h-3" />
-                  <span>Bank Transfer</span>
-                </button>
-              </div>
-            </div>
-
-            {/* 4. Weak East Gate / Grate Escape */}
-            <button
-              type="button"
-              disabled={busy || isNightLockup}
-              onClick={(e) => {
-                e.currentTarget.blur();
-                onStartPrisonBreak();
-              }}
-              className={`flex items-center justify-between gap-2 px-2.5 py-1.5 border text-left text-xs cursor-pointer disabled:opacity-50 ${
-                atEastGate
-                  ? 'bg-red-700 hover:bg-red-600 border-red-300 text-white animate-pulse'
-                  : 'bg-red-950/85 hover:bg-red-900 border-red-500/70 text-red-100'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <KeyRound className="w-3.5 h-3.5 text-red-300 shrink-0" />
-                <div>
-                  <div className="font-bold text-[11px]">
-                    {atEastGate ? '[4] PICK GATE / GRATE NOW!' : '[4] Prison Break (East Gate / Grate)'}
-                  </div>
-                  <div className="text-[9px] text-red-200">
-                    {atEastGate
-                      ? 'Hold lockpick while cones are away -> 3★!'
-                      : 'Free Yard [17:00–20:30] + Distraction -> Safe Escape'}
-                  </div>
-                </div>
-              </div>
-              <ShieldAlert className="w-3.5 h-3.5 text-red-300 shrink-0" />
-            </button>
-
-            <button
-              type="button"
-              disabled={busy}
-              onClick={(e) => {
-                e.currentTarget.blur();
-                onSkipSentence();
-              }}
-              className="flex items-center justify-center gap-1.5 py-1 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[10px] font-mono-num text-slate-300 cursor-pointer disabled:opacity-50"
-            >
-              <Clock className="w-3 h-3 text-sky-400" />
-              <span>Serve Full Sentence Fast-Forward (+FD Interest)</span>
-            </button>
-          </div>
-        </div>
       </div>
-
-      {/* Bottom Inmate Tip Bubble, Prompt & Controls Strip */}
-      <div className="flex flex-col items-center gap-2">
-        {jail.nearInmateDialogue && (
-          <div className="max-w-lg px-3.5 py-2 bg-[#0B0E14]/95 border border-purple-400/70 shadow-xl flex items-start gap-2">
-            <MessageSquareText className="w-4 h-4 text-purple-300 shrink-0 mt-0.5" />
-            <div className="text-xs leading-snug">
-              <span className="font-bold text-purple-300">{jail.nearInmateDialogue.name}: </span>
-              <span className="text-slate-100">{jail.nearInmateDialogue.text}</span>
-            </div>
-          </div>
-        )}
-        {stationPrompt && (
-          <div className="px-4 py-2 bg-[#0B0E14]/95 border-2 border-amber-400 text-xs sm:text-sm font-mono-num font-bold text-amber-200 shadow-lg text-center">
-            {stationPrompt}
-          </div>
-        )}
-        {!isTouchHud && (
-          <div className="px-3 py-1 bg-[#0B0E14]/90 border border-slate-700/80 text-[11px] font-mono-num text-slate-300">
-            WASD Walk · Click Lock / Drag Look · [Space] Jump · [LMB/J] Fight · [6/B] Bribe Rival · [E] Action · [1-5] Quick · [C] FPV
-          </div>
-        )}
-      </div>
-    </div>
+    </>
   );
 };

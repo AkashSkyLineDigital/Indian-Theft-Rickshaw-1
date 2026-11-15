@@ -52,7 +52,7 @@ export const GunShopModal: React.FC<GunShopModalProps> = ({
         <div className="flex items-center justify-between px-6 py-4 bg-[#0B0E14] border-b border-slate-800">
           <div className="flex items-center gap-4">
             <h2 className="font-display text-xl font-bold tracking-wider text-slate-100">
-              PANKAJ AMMUNATION &amp; ARMORY
+              PANKAJ SHASTRA BHANDAR &amp; ARMORY
             </h2>
             <span
               className={`font-mono-num text-sm font-bold ${

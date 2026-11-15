@@ -431,49 +431,49 @@ export const CityMapModal: React.FC<CityMapModalProps> = ({
   ];
 
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-[#070A10]/88 p-4 pointer-events-auto">
-      <div className="w-full max-w-4xl bg-[#101520] border border-slate-700/90 shadow-2xl flex flex-col overflow-hidden max-h-[92vh]">
-        <div className="flex items-center justify-between px-5 py-3 bg-[#0B0E14] border-b border-slate-800 shrink-0">
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <MapIcon className="w-4 h-4 text-amber-400" />
-            <h2 className="font-display text-base font-bold tracking-wider text-slate-100">
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-[#070A10]/88 p-2 sm:p-4 pointer-events-auto">
+      <div className="w-full max-w-4xl bg-[#101520] border border-slate-700/90 shadow-2xl flex flex-col overflow-hidden max-h-[94vh]">
+        <div className="flex items-center justify-between gap-2 px-3.5 sm:px-5 py-2.5 sm:py-3 bg-[#0B0E14] border-b border-slate-800 shrink-0">
+          <div className="flex items-center gap-2 flex-wrap min-w-0">
+            <MapIcon className="w-4 h-4 text-amber-400 shrink-0" />
+            <h2 className="font-display text-[clamp(0.875rem,2.5vw,1rem)] font-bold tracking-wider text-slate-100 truncate">
               CITY GPS &amp; TACTICAL MAP
             </h2>
-            <span className="text-[11px] font-mono-num text-slate-400">
+            <span className="text-[10px] sm:text-[11px] font-mono-num text-slate-400">
               POS ({Math.round(hud.playerX)}, {Math.round(hud.playerZ)})
             </span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {hud.waypoint?.active && (
               <button
                 type="button"
                 onClick={onClearWaypoint}
-                className="flex items-center gap-1.5 px-2.5 py-1 bg-red-950/80 hover:bg-red-900 border border-red-500/60 text-xs font-mono-num text-red-200 cursor-pointer"
+                className="flex items-center gap-1 px-2 sm:px-2.5 py-1 bg-red-950/80 hover:bg-red-900 border border-red-500/60 text-[11px] font-mono-num text-red-200 cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5" />
-                <span>CLEAR GPS</span>
+                <span className="hidden xs:inline">CLEAR GPS</span>
               </button>
             )}
             <button
               type="button"
               onClick={onClose}
-              className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-mono-num text-slate-200 cursor-pointer"
+              className="flex items-center gap-1 px-2 sm:px-2.5 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-mono-num text-slate-200 cursor-pointer"
             >
-              <span>CLOSE (M)</span>
+              <span>CLOSE</span>
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
 
-        <div className="p-4 grid grid-cols-1 md:grid-cols-[1fr_250px] gap-4 bg-[#0D111A] overflow-y-auto">
-          <div className="flex flex-col items-center gap-3">
+        <div className="p-3 sm:p-4 grid grid-cols-1 md:grid-cols-[1fr_250px] gap-3 sm:gap-4 bg-[#0D111A] overflow-y-auto">
+          <div className="flex flex-col items-center gap-2 sm:gap-3">
             <canvas
               ref={canvasRef}
               width={520}
               height={520}
               onClick={handleCanvasClick}
-              title="Click anywhere on map to set GPS waypoint"
-              className="w-full max-w-[490px] aspect-square border border-slate-700/80 bg-[#0c111a] cursor-crosshair"
+              title="Tap or click anywhere on map to set GPS waypoint"
+              className="w-full max-w-[min(86vw,490px)] aspect-square border border-slate-700/80 bg-[#0c111a] cursor-crosshair touch-manipulation"
             />
             <div className="text-[11px] font-mono-num text-slate-400 text-center">
               Click anywhere on the map or choose a destination on the right to set your GPS route.

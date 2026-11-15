@@ -616,8 +616,8 @@ export const LicenseOfficeModal: React.FC<LicenseOfficeModalProps> = ({
   const currentDlQuestion = DRIVING_QUESTIONS[dlQIdx];
 
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-[#070A10]/85 p-4 pointer-events-auto">
-      <div className="w-full max-w-2xl bg-[#101520] border border-purple-500/50 shadow-2xl flex flex-col overflow-hidden max-h-[92vh]">
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-[#070A10]/85 p-2 sm:p-4 pointer-events-auto">
+      <div className="w-full max-w-2xl bg-[#101520] border border-purple-500/50 shadow-2xl flex flex-col overflow-hidden max-h-[94vh]">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3.5 bg-[#0B0E14] border-b border-slate-800 shrink-0">
           <div className="flex items-center gap-2.5">

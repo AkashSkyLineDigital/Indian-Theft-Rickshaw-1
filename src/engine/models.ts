@@ -935,7 +935,7 @@ export function createRoadblockBarricade(): THREE.Group {
 
 /**
  * Multi-part PBR vehicle builder grounded at y = 0, facing local -Z (headlights forward).
- * Supports Indian motorcycles ('bike'), White/Blue Police Bolero Jeeps ('police'), Auto-Rickshaws, Sedans & Tactical units.
+ * Supports Indian motorcycles ('bike'), White/Blue Police Vajra SUVs ('police'), Auto-Rickshaws, Sedans & Tactical units.
  */
 export function createVehicleModel(
   kind: VehicleKind,
@@ -1245,7 +1245,7 @@ export function createVehicleModel(
     return { root, wheels, lightBarRed, lightBarBlue };
   }
 
-  // Authentic White & Royal-Blue Indian Police Jeep / Bolero-style Patrol SUV
+  // Authentic White & Royal-Blue Indian Police Vajra Patrol SUV
   if (kind === 'police') {
     const whiteMat = new THREE.MeshPhysicalMaterial({
       color: 0xf8fafc,
@@ -1272,7 +1272,7 @@ export function createVehicleModel(
     const tireMat = new THREE.MeshStandardMaterial({ color: 0x121418, roughness: 0.88, metalness: 0.05 });
     const rimMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.9, roughness: 0.22 });
 
-    // Raised Bolero SUV body
+    // Raised Vajra Police SUV body
     const lowerBody = new THREE.Mesh(new THREE.BoxGeometry(2.14, 0.78, 4.55), whiteMat);
     lowerBody.position.set(0, 0.8, 0);
     lowerBody.castShadow = true;
@@ -1956,7 +1956,7 @@ export function createWaypointBeacon(): WaypointBeaconRig {
 
 /**
  * Builds the extended 11x11 Indian Theft Rickshaw city grid, sidewalks, instanced road markings & colonies,
- * Pankaj Ammunation, Grand Royal Bank Of India, Shree Ram Mandir, Shree Krishna Mandir, Noor Masjid,
+ * Pankaj Shastra Bhandar, Grand Royal Bank Of India, Shree Ram Mandir, Shree Krishna Mandir, Noor Masjid,
  * District & Sessions Court exterior, Bharat Central Jail compound, Chai Tapris, Golgappa/Chaat Stalls,
  * Street Signs, Traffic Lights, Auto Stand, and colliders.
  */
@@ -2000,7 +2000,7 @@ export function buildCityEnvironment(
   const buildingSigns: BuildingSignInfo[] = [
     {
       id: 'sign-gunshop',
-      title: 'Pankaj Ammunation',
+      title: 'Pankaj Shastra Bhandar',
       subtitle: 'Weapons · Ammo · Armor · Medkits',
       x: 30,
       y: 7.4,
@@ -2273,7 +2273,7 @@ export function buildCityEnvironment(
         colliders.push({ minX: bx - 11, maxX: bx - 5, minZ: bz + 9.2, maxZ: bz + 10, height: 6.2 });
         colliders.push({ minX: bx + 5, maxX: bx + 11, minZ: bz + 9.2, maxZ: bz + 10, height: 6.2 });
 
-        // Roof & Pankaj Ammunation Sign over doorway
+        // Roof & Pankaj Shastra Bhandar Sign over doorway
         const roof = new THREE.Mesh(new THREE.BoxGeometry(23, 0.6, 19), roofMat);
         roof.position.set(bx, 6.4, bz + 1);
         roof.castShadow = true;
@@ -2283,7 +2283,7 @@ export function buildCityEnvironment(
         awning.position.set(bx, 5.1, bz + 10.2);
         staticCityGroup.add(awning);
 
-        const shopSignTex = createStreetCanvasTex('#1c1106', '#f59e0b', 'PANKAJ AMMUNATION', 'ARMS · AMMO · ARMOR · MEDKITS');
+        const shopSignTex = createStreetCanvasTex('#1c1106', '#f59e0b', 'PANKAJ SHASTRA BHANDAR', 'ARMS · AMMO · ARMOR · MEDKITS');
         const shopSignBoard = new THREE.Mesh(
           new THREE.BoxGeometry(11.5, 2.2, 0.25),
           new THREE.MeshStandardMaterial({
@@ -3162,7 +3162,7 @@ export function buildCityEnvironment(
   const streetSigns: [number, number, string, number][] = [
     [9.8, 9.8, 'BHARAT CHOWK', 0],
     [-9.8, -9.8, 'M.G. MARG', Math.PI / 4],
-    [10, -50, 'PANKAJ AMMUNATION', 0],
+    [10, -50, 'PANKAJ SHASTRA BHANDAR', 0],
     [-10, -50, 'ROYAL BANK MARG', 0],
     [50, 10, 'RAM MANDIR MARG', -Math.PI / 2],
     [-70, -10, 'NOOR MASJID ROAD', Math.PI / 2],
@@ -6092,11 +6092,12 @@ function addIndianFamilyHouse(
     const frame = new THREE.Mesh(new THREE.BoxGeometry(1.95, 2.35, 0.14), goldMat);
     frame.position.set(d.x, d.y, d.z);
     frame.rotation.y = d.ry;
+    const deityTex = createDeityPaintingTex(d.deity);
     const art = new THREE.Mesh(
       new THREE.PlaneGeometry(1.7, 2.1),
       new THREE.MeshStandardMaterial({
-        map: createDeityPaintingTex(d.deity),
-        emissiveMap: createDeityPaintingTex(d.deity),
+        map: deityTex,
+        emissiveMap: deityTex,
         emissive: 0xffffff,
         emissiveIntensity: 0.22,
         roughness: 0.45,

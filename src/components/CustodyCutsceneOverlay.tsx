@@ -30,37 +30,38 @@ export const CustodyCutsceneOverlay: React.FC<CustodyCutsceneOverlayProps> = ({
   }, [onSkip]);
 
   return (
-    <div className="fixed inset-0 z-30 pointer-events-none flex flex-col justify-between p-4 sm:p-6">
-      {/* Top Cinematic Letterbox Bar */}
-      <div className="pointer-events-auto mx-auto w-full max-w-3xl bg-[#0B0E14]/94 border border-sky-500/60 shadow-2xl px-4 py-3 flex flex-col gap-2">
+    <div className="fixed inset-0 z-30 pointer-events-none flex flex-col justify-between p-3 sm:p-5">
+      {/* Slim Translucent Top Cutscene Ribbon */}
+      <div className="pointer-events-auto mx-auto w-full max-w-3xl hud-glass rounded-xl shadow-xl px-3.5 py-2.5 flex flex-col gap-1.5 hud-text-shadow">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2 min-w-0">
             {cutscene.phase === 'THANA_LOCKUP' ? (
-              <Shield className="w-5 h-5 text-sky-400 shrink-0" />
+              <Shield className="w-4 h-4 text-[#FBBF24] shrink-0" />
             ) : (
-              <Truck className="w-5 h-5 text-amber-400 shrink-0" />
+              <Truck className="w-4 h-4 text-[#FBBF24] shrink-0" />
             )}
-            <div>
-              <div className="font-display text-sm sm:text-base font-extrabold tracking-wider text-sky-300 uppercase">
+            <div className="min-w-0">
+              <span className="font-display text-xs sm:text-sm font-bold tracking-wider text-[#FBBF24] uppercase">
                 {cutscene.title}
-              </div>
-              <div className="text-[11px] font-mono-num text-slate-300">
+              </span>
+              <span className="hidden sm:inline text-white/30 mx-1.5">·</span>
+              <span className="block sm:inline text-[11px] font-mono-num text-slate-200 truncate">
                 {cutscene.stepLabel}
-              </div>
+              </span>
             </div>
           </div>
 
           <button
             type="button"
             onClick={onSkip}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-[#0B0E14] text-xs font-display font-extrabold uppercase tracking-wider cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1 bg-[#F59E0B] hover:bg-[#FBBF24] rounded-lg text-[#0E1118] text-[11px] font-display font-extrabold uppercase tracking-wider cursor-pointer shrink-0"
           >
             <SkipForward className="w-3.5 h-3.5" />
-            <span>Skip Cutscene [Space]</span>
+            <span>Skip [Space]</span>
           </button>
         </div>
 
-        {/* 4-Stage Custody Journey Indicator */}
+        {/* Sleek 4-Stage Progress Ribbon */}
         <div className="grid grid-cols-4 gap-1.5 text-[10px] font-mono-num">
           {CUSTODY_STEPS.map((label, idx) => {
             const active = cutscene.stepIndex === idx + 1;
@@ -68,12 +69,12 @@ export const CustodyCutsceneOverlay: React.FC<CustodyCutsceneOverlayProps> = ({
             return (
               <div
                 key={label}
-                className={`px-2 py-1 border text-center truncate ${
+                className={`px-2 py-0.5 rounded border text-center truncate ${
                   active
-                    ? 'bg-sky-500/25 border-sky-400 text-sky-200 font-bold'
+                    ? 'bg-amber-500/20 border-amber-400/65 text-[#FBBF24] font-bold'
                     : done
-                      ? 'bg-emerald-950/75 border-emerald-500/60 text-emerald-300'
-                      : 'bg-slate-900/90 border-slate-700 text-slate-500'
+                      ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-200'
+                      : 'bg-white/[0.04] border-white/10 text-slate-300/65'
                 }`}
               >
                 {label}
@@ -82,18 +83,18 @@ export const CustodyCutsceneOverlay: React.FC<CustodyCutsceneOverlayProps> = ({
           })}
         </div>
 
-        <div className="w-full h-1.5 bg-slate-800 overflow-hidden">
+        <div className="w-full h-1 bg-black/45 rounded-full overflow-hidden">
           <div
-            className="h-full bg-sky-400 transition-all duration-150"
+            className="h-full bg-[#F59E0B] transition-all duration-150"
             style={{ width: `${Math.min(100, Math.max(0, cutscene.progressPct))}%` }}
           />
         </div>
       </div>
 
-      {/* Bottom Subtitle Strip */}
-      <div className="pointer-events-auto mx-auto w-full max-w-2xl bg-[#0B0E14]/94 border border-slate-700 shadow-2xl px-4 py-3 text-center">
-        <p className="text-sm sm:text-base text-slate-100 font-medium leading-relaxed">
-          “{cutscene.subtitle}”
+      {/* Sleek Bottom Translucent Caption Bar */}
+      <div className="pointer-events-auto mx-auto w-full max-w-2xl hud-glass rounded-xl shadow-xl px-4 py-2.5 text-center hud-text-shadow">
+        <p className="text-xs sm:text-sm text-slate-100 font-medium leading-relaxed">
+          &ldquo;{cutscene.subtitle}&rdquo;
         </p>
       </div>
     </div>

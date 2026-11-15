@@ -5,7 +5,7 @@ interface HouseNamingModalProps {
   onConfirmName: (houseName: string) => void;
 }
 
-const SAMPLE_NAMES = ['Sharma Niwas', 'Shanti Bhavan', 'Akash Villa', 'Swarg Sadan'];
+const SAMPLE_NAMES = ['Sharma Niwas', 'Shanti Bhavan', 'Anand Kutir', 'Swarg Sadan'];
 
 export const HouseNamingModal: React.FC<HouseNamingModalProps> = ({ onConfirmName }) => {
   const [nameInput, setNameInput] = useState('Sharma Niwas');
@@ -17,10 +17,10 @@ export const HouseNamingModal: React.FC<HouseNamingModalProps> = ({ onConfirmNam
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-[#06090F]/88 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 bg-[#06090F]/88 flex items-center justify-center p-2.5 sm:p-4">
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-md bg-[#101520] border-2 border-amber-500/80 shadow-2xl overflow-hidden"
+        className="w-full max-w-md max-h-[94vh] overflow-y-auto bg-[#101520] border-2 border-amber-500/80 shadow-2xl"
       >
         <div className="px-5 py-4 bg-gradient-to-r from-amber-950/80 via-[#151D2B] to-amber-950/60 border-b border-amber-500/40 flex items-center gap-3">
           <div className="w-10 h-10 bg-amber-500/20 border border-amber-400/70 flex items-center justify-center shrink-0">
@@ -57,7 +57,7 @@ export const HouseNamingModal: React.FC<HouseNamingModalProps> = ({ onConfirmNam
               autoFocus
               value={nameInput}
               onChange={(e) => setNameInput(e.target.value)}
-              placeholder="e.g. Sharma Niwas, Shanti Bhavan, Akash Villa"
+              placeholder="e.g. Sharma Niwas, Shanti Bhavan, Anand Kutir"
               className="w-full px-3.5 py-2.5 bg-[#090D16] border border-slate-600 focus:border-amber-400 focus:outline-none text-sm font-semibold text-white"
             />
           </div>

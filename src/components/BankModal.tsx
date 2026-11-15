@@ -94,19 +94,19 @@ export const BankModal: React.FC<BankModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-[#070A10]/88 p-3 sm:p-4">
-      <div className="w-full max-w-4xl bg-[#101520] border border-amber-500/60 shadow-2xl flex flex-col overflow-hidden max-h-[92vh]">
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-[#070A10]/88 p-2 sm:p-4">
+      <div className="w-full max-w-4xl bg-[#101520] border border-amber-500/60 shadow-2xl flex flex-col overflow-hidden max-h-[94vh]">
         {/* Header with Uncopyrighted Geometric Crest */}
-        <div className="flex items-center justify-between px-5 py-3.5 bg-[#0B0E14] border-b border-slate-800 shrink-0">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 bg-emerald-950 border border-amber-500/70 flex items-center justify-center text-amber-400 shrink-0">
-              <Landmark className="w-5 h-5" />
+        <div className="flex items-center justify-between px-3.5 sm:px-5 py-3 bg-[#0B0E14] border-b border-slate-800 shrink-0">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 bg-emerald-950 border border-amber-500/70 flex items-center justify-center text-amber-400 shrink-0">
+              <Landmark className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
             <div className="min-w-0">
-              <h2 className="font-display text-base sm:text-lg font-bold tracking-wider text-slate-100 truncate">
+              <h2 className="font-display text-[clamp(0.875rem,2.6vw,1.125rem)] font-bold tracking-wider text-slate-100 truncate">
                 ROYAL BANK OF INDIA · BRANCH &amp; TREASURY
               </h2>
-              <p className="text-[11px] font-mono-num text-amber-400 truncate">
+              <p className="text-[10px] sm:text-[11px] font-mono-num text-amber-400 truncate">
                 FICTIONAL CIVIC BANK · SAVINGS 2.5% P.A. · FIXED DEPOSIT 4.0% P.A.
               </p>
             </div>
@@ -115,19 +115,19 @@ export const BankModal: React.FC<BankModalProps> = ({
             type="button"
             onClick={onClose}
             aria-label="Close Bank"
-            className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+            className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Live Calendar, Clock & Tabs Bar */}
-        <div className="px-5 py-2.5 bg-[#0D121C] border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 shrink-0">
-          <div className="flex items-center gap-1.5">
+        <div className="px-3.5 sm:px-5 py-2 sm:py-2.5 bg-[#0D121C] border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
               onClick={() => setTab('accounts')}
-              className={`px-3 py-1.5 text-xs font-display font-bold tracking-wider uppercase border cursor-pointer transition-colors ${
+              className={`px-2.5 sm:px-3 py-1.5 text-[11px] sm:text-xs font-display font-bold tracking-wider uppercase border cursor-pointer transition-colors ${
                 tab === 'accounts'
                   ? 'bg-amber-500 text-[#0B0E14] border-amber-400'
                   : 'bg-[#121826] text-slate-300 border-slate-700 hover:border-slate-500'
@@ -138,7 +138,7 @@ export const BankModal: React.FC<BankModalProps> = ({
             <button
               type="button"
               onClick={() => setTab('passbook')}
-              className={`px-3 py-1.5 text-xs font-display font-bold tracking-wider uppercase border cursor-pointer transition-colors flex items-center gap-1.5 ${
+              className={`px-2.5 sm:px-3 py-1.5 text-[11px] sm:text-xs font-display font-bold tracking-wider uppercase border cursor-pointer transition-colors flex items-center gap-1.5 ${
                 tab === 'passbook'
                   ? 'bg-amber-500 text-[#0B0E14] border-amber-400'
                   : 'bg-[#121826] text-slate-300 border-slate-700 hover:border-slate-500'
@@ -150,7 +150,7 @@ export const BankModal: React.FC<BankModalProps> = ({
             <button
               type="button"
               onClick={() => setTab('mission')}
-              className={`px-3 py-1.5 text-xs font-display font-bold tracking-wider uppercase border cursor-pointer transition-colors flex items-center gap-1.5 ${
+              className={`px-2.5 sm:px-3 py-1.5 text-[11px] sm:text-xs font-display font-bold tracking-wider uppercase border cursor-pointer transition-colors flex items-center gap-1.5 ${
                 tab === 'mission'
                   ? 'bg-sky-500 text-[#071018] border-sky-400'
                   : 'bg-[#121826] text-sky-300 border-slate-700 hover:border-sky-500/60'
@@ -161,7 +161,7 @@ export const BankModal: React.FC<BankModalProps> = ({
             </button>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 text-[11px] font-mono-num">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-[10px] sm:text-[11px] font-mono-num">
             <span className="flex items-center gap-1 text-sky-300">
               <CalendarDays className="w-3.5 h-3.5" />
               <span>
@@ -176,7 +176,7 @@ export const BankModal: React.FC<BankModalProps> = ({
         </div>
 
         {/* Scrollable Modal Body */}
-        <div className="p-5 flex flex-col gap-4 overflow-y-auto">
+        <div className="p-3.5 sm:p-5 flex flex-col gap-4 overflow-y-auto">
           {tab === 'accounts' && (
             <>
               {probationDaysLeft > 0 && (

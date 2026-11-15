@@ -1,6 +1,6 @@
 import React from 'react';
 import { ArrowLeftRight, Heart, Shield, Shirt, X } from 'lucide-react';
-import { PLAYER_OUTFITS, PlayerOutfitId, WEAPON_ORDER, WEAPONS, WeaponId } from '../types/game';
+import { MAX_MEDKITS, PLAYER_OUTFITS, PlayerOutfitId, WEAPON_ORDER, WEAPONS, WeaponId } from '../types/game';
 import { WeaponIcon } from './WeaponIcon';
 
 interface HomeWardrobeModalProps {
@@ -149,7 +149,7 @@ export const HomeWardrobeModal: React.FC<HomeWardrobeModalProps> = ({
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  disabled={playerMedkits <= 0 || wardrobeMedkits >= 5}
+                  disabled={playerMedkits <= 0 || wardrobeMedkits >= MAX_MEDKITS}
                   onClick={onStoreMedkit}
                   className="px-2.5 py-1.5 bg-[#0B0E14] border border-slate-700 hover:border-amber-400 disabled:opacity-40 text-[11px] font-mono-num font-bold text-amber-300 cursor-pointer"
                 >
@@ -157,7 +157,7 @@ export const HomeWardrobeModal: React.FC<HomeWardrobeModalProps> = ({
                 </button>
                 <button
                   type="button"
-                  disabled={wardrobeMedkits <= 0 || playerMedkits >= 5}
+                  disabled={wardrobeMedkits <= 0 || playerMedkits >= MAX_MEDKITS}
                   onClick={onRetrieveMedkit}
                   className="px-2.5 py-1.5 bg-[#0B0E14] border border-slate-700 hover:border-emerald-400 disabled:opacity-40 text-[11px] font-mono-num font-bold text-emerald-300 cursor-pointer"
                 >

@@ -1,38 +1,5 @@
 import { DEFAULT_SETTINGS, GameSettings, WeaponId } from '../types/game';
-
-const POLICE_KILL_LINES: { text: string; tts: string }[] = [
-  {
-    text: 'Bhaagne ki koshish kar raha tha? Ab padha reh sadak pe!',
-    tts: 'भागने की कोशिश कर रहा था? अब पड़ा रह सड़क पे!',
-  },
-  {
-    text: 'Kanoon se bachega? Tera khel khatam ho gaya!',
-    tts: 'कानून से बचेगा? तेरा खेल ख़तम हो गया!',
-  },
-  {
-    text: 'Ruk bola tha na... ab bhugat!',
-    tts: 'रुक बोला था ना... अब भुगत!',
-  },
-  {
-    text: 'Police se panga bahut mehenga pad gaya!',
-    tts: 'पुलिस से पंगा बहुत महंगा पड़ गया!',
-  },
-];
-
-const POLICE_WARN_LINES: { text: string; tts: string }[] = [
-  {
-    text: 'Haath upar kar! Wahin ruk ja!',
-    tts: 'हाथ ऊपर कर! वहीं रुक जा!',
-  },
-  {
-    text: 'Pakdo isko! Police se bhaag raha hai!',
-    tts: 'पकड़ो इसको! पुलिस से भाग रहा है!',
-  },
-  {
-    text: 'Police! Chup-chaap ruk ja warna goli chalegi!',
-    tts: 'पुलिस! चुपचाप रुक जा वरना गोली चलेगी!',
-  },
-];
+import { pickHindiLine } from './hindiDialogues';
 
 class SoundEngine {
   private ctx: AudioContext | null = null;
@@ -1062,9 +1029,106 @@ class SoundEngine {
     });
   }
 
+  public playMobileRingtone(): void {
+    const ctx = this.ensureContext();
+    const vol = Math.max(0.18, this.effectiveSfxGain());
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    const notes = [659.25, 783.99, 987.77, 783.99, 1046.5];
+    notes.forEach((freq, idx) => {
+      const t = now + idx * 0.11;
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, t);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.001, t);
+      g.gain.linearRampToValueAtTime(0.13 * vol, t + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.2);
+    });
+  }
+
+  public playOutgoingRingback(): void {
+    const ctx = this.ensureContext();
+    const vol = Math.max(0.16, this.effectiveSfxGain());
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    [440, 480].forEach((freq) => {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.001, now);
+      g.gain.linearRampToValueAtTime(0.075 * vol, now + 0.025);
+      g.gain.setValueAtTime(0.075 * vol, now + 0.55);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.68);
+    });
+  }
+
+  public playCallHangupTone(): void {
+    const ctx = this.ensureContext();
+    const vol = Math.max(0.16, this.effectiveSfxGain());
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    [520, 380].forEach((freq, idx) => {
+      const t = now + idx * 0.09;
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, t);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.001, t);
+      g.gain.linearRampToValueAtTime(0.11 * vol, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.1);
+    });
+  }
+
+  public playVehicleHorn(kind: 'rickshaw' | 'bike' | 'car' = 'car'): void {
+    const ctx = this.ensureContext();
+    const vol = this.effectiveSfxGain();
+    if (!ctx || vol <= 0.01) return;
+
+    const now = ctx.currentTime;
+    const freqs =
+      kind === 'rickshaw'
+        ? [440, 554] // Classic cheerful auto-rickshaw dual horn
+        : kind === 'bike'
+          ? [520] // Crisp single motorcycle horn
+          : [385, 485]; // Rich car dual-tone horn
+
+    freqs.forEach((f) => {
+      const osc = ctx.createOscillator();
+      osc.type = kind === 'bike' ? 'sawtooth' : 'triangle';
+      osc.frequency.setValueAtTime(f, now);
+
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.001, now);
+      g.gain.linearRampToValueAtTime(0.16 * vol, now + 0.025);
+      g.gain.setValueAtTime(0.16 * vol, now + 0.22);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.34);
+
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.36);
+    });
+  }
+
   public pickPoliceLine(kind: 'kill' | 'warn'): { text: string; tts: string } {
-    const pool = kind === 'kill' ? POLICE_KILL_LINES : POLICE_WARN_LINES;
-    return pool[Math.floor(Math.random() * pool.length)];
+    return pickHindiLine(kind === 'kill' ? 'police_kill' : 'police_warn');
   }
 
   public speakPoliceLine(
@@ -1119,14 +1183,15 @@ class SoundEngine {
       | 'judge'
       | 'lawyer'
       | 'warden'
-      | 'clerk',
+      | 'clerk'
+      | 'mom',
     seedId: number,
     textOrDevanagari: string,
     priority: 'high' | 'normal' | 'low' = 'normal',
   ): void {
     if ((role === 'officer' || role === 'warden' || role === 'inspector') && !this.settings.policeVoiceEnabled) return;
     if ((role === 'citizen' || role === 'enforcer' || role === 'dealer' || role === 'clerk') && !this.settings.npcVoiceEnabled) return;
-    if ((role === 'banker' || role === 'narrator' || role === 'judge' || role === 'lawyer') && !this.settings.gameVoiceEnabled) return;
+    if ((role === 'banker' || role === 'narrator' || role === 'judge' || role === 'lawyer' || role === 'mom') && !this.settings.gameVoiceEnabled) return;
 
     const cleanText = textOrDevanagari.trim();
     if (!cleanText) return;
@@ -1146,62 +1211,67 @@ class SoundEngine {
     let pitch = 0.88;
     let blipFreq = 220;
     let blipWave: OscillatorType = 'triangle';
-    const isFemaleRole = role === 'lawyer';
+    const isFemaleRole = role === 'lawyer' || role === 'mom';
 
     if (role === 'judge') {
-      rate = 0.88;
-      pitch = 0.68; // Deep authoritative male judicial voice
+      rate = 0.92;
+      pitch = 0.82; // Authoritative judicial baritone
       blipFreq = 138;
       blipWave = 'triangle';
     } else if (role === 'inspector') {
-      rate = 0.93;
-      pitch = 0.77; // Stern male Police Inspector baritone
+      rate = 1.05;
+      pitch = 0.90; // Crisp commanding Police Inspector
       blipFreq = 158;
       blipWave = 'triangle';
     } else if (role === 'warden') {
-      rate = 0.89;
-      pitch = 0.72; // Gruff male Jailer voice
+      rate = 1.02;
+      pitch = 0.88; // Gruff Jail Warden
       blipFreq = 146;
       blipWave = 'sawtooth';
     } else if (role === 'officer') {
-      rate = 0.91 + (hash % 3) * 0.03;
-      pitch = 0.79 + (hash % 4) * 0.04; // Distinct male beat/traffic cops
+      rate = 1.05;
+      pitch = 0.88 + (hash % 3) * 0.02; // ~0.90 police squad officers
       blipFreq = 165 + (hash % 3) * 12;
       blipWave = 'triangle';
     } else if (role === 'lawyer') {
-      rate = 0.97;
-      pitch = 1.12; // Adv. Meera Sharma clear female tone
+      rate = 1.08;
+      pitch = 1.05; // Adv. Meera Sharma / articulate Defense Vakil
       blipFreq = 305;
       blipWave = 'sine';
+    } else if (role === 'mom') {
+      rate = 0.96;
+      pitch = 1.08; // Warm family / mother Hindi voice
+      blipFreq = 285;
+      blipWave = 'sine';
     } else if (role === 'banker') {
-      rate = 0.94;
-      pitch = 0.9;
+      rate = 1.0;
+      pitch = 0.97;
       blipFreq = 240;
       blipWave = 'triangle';
     } else if (role === 'narrator') {
-      rate = 0.95;
-      pitch = 0.88;
+      rate = 0.98;
+      pitch = 0.95;
       blipFreq = 260;
       blipWave = 'sine';
     } else if (role === 'enforcer') {
-      rate = 0.91 + (hash % 3) * 0.04;
-      pitch = 0.7 + (hash % 4) * 0.045;
+      rate = 1.02 + (hash % 3) * 0.03;
+      pitch = 0.84 + (hash % 4) * 0.03;
       blipFreq = 128 + (hash % 4) * 14;
       blipWave = 'sawtooth';
     } else if (role === 'dealer') {
-      rate = 0.95;
-      pitch = 0.85;
+      rate = 1.03;
+      pitch = 0.96;
       blipFreq = 205;
       blipWave = 'square';
     } else if (role === 'clerk') {
-      rate = 0.96 + (hash % 2) * 0.04;
-      pitch = 0.92 + (hash % 3) * 0.04;
+      rate = 1.04 + (hash % 2) * 0.03;
+      pitch = 0.98 + (hash % 5) * 0.035; // 0.98..1.12
       blipFreq = 245;
       blipWave = 'square';
     } else {
-      // Varied male citizen voices across distinct pitch/rate registers
-      rate = 0.89 + (hash % 4) * 0.04;
-      pitch = 0.75 + (hash % 6) * 0.042;
+      // Varied street civilians / inmates across pitches 0.95..1.18
+      rate = 0.96 + (hash % 4) * 0.03;
+      pitch = 0.95 + (hash % 7) * 0.038;
       blipFreq = 185 + (hash % 6) * 20;
       blipWave = 'triangle';
     }
@@ -1220,34 +1290,39 @@ class SoundEngine {
         if (live && live.length > 0) this.cachedVoices = live;
         const allVoices = this.cachedVoices;
 
+        const googleHindi = allVoices.find((v) => /google\s*(हिन्दी|hindi)/i.test(v.name));
+        const hemantOrMadhur = allVoices.filter((v) => /microsoft.*(hemant|madhur)/i.test(v.name));
+        const kalpanaOrSwara = allVoices.filter((v) => /microsoft.*(kalpana|swara)/i.test(v.name));
         const hiAll = allVoices.filter(
           (v) => v.lang.toLowerCase().startsWith('hi') || /hindi|हिन्दी|hemant|kalpana|swara|madhur/i.test(v.name),
         );
-        const inAll = allVoices.filter((v) => v.lang.toLowerCase().includes('in'));
-        const pool = hiAll.length > 0 ? hiAll : inAll.length > 0 ? inAll : allVoices;
+        const enInAll = allVoices.filter(
+          (v) => v.lang.toLowerCase() === 'en-in' || v.lang.toLowerCase().includes('in'),
+        );
         hasHiVoices = hiAll.length > 0;
 
-        // Partition male vs female voices cleanly so male characters pick male voices when available
-        const maleRegex = /hemant|madhur|prabhat|rishi|male|ravindra|amit|arjun|neeraj|suresh|david|mark|alex|daniel|george|guy|andrew|brian|christopher|eric|ryan|steffan/i;
-        const femaleRegex = /kalpana|swara|heera|lekha|veena|female|zira|hazel|samantha|karen|victoria|ava|emma|jenny|aria|michelle|neerja/i;
-
         const pickVoice = (): SpeechSynthesisVoice | undefined => {
-          if (pool.length === 0) return undefined;
+          if (allVoices.length === 0) return undefined;
+          // Female role (Adv. Meera Sharma / female citizens if seed odd): prefer Kalpana/Swara -> Google Hindi -> hi-IN -> en-IN
           if (isFemaleRole) {
-            const fem = pool.filter((v) => femaleRegex.test(v.name) || !maleRegex.test(v.name));
-            return fem.length > 0 ? fem[hash % fem.length] : pool[0];
+            if (kalpanaOrSwara.length > 0) return kalpanaOrSwara[hash % kalpanaOrSwara.length];
+            if (googleHindi) return googleHindi;
+            if (hiAll.length > 0) return hiAll[hash % hiAll.length];
+            if (enInAll.length > 0) return enInAll[hash % enInAll.length];
+            return allVoices[hash % allVoices.length];
           }
-          const malePreferred = pool.filter((v) => maleRegex.test(v.name) && !femaleRegex.test(v.name));
-          if (malePreferred.length > 0) {
-            const roleOffset =
-              role === 'judge' ? 0 : role === 'inspector' ? 1 : role === 'warden' ? 2 : role === 'officer' ? 3 : hash;
-            return malePreferred[roleOffset % malePreferred.length];
+          // Priority chain: Google हिन्दी -> Microsoft Hemant / Madhur -> Kalpana / Swara -> hi-IN -> en-IN
+          if (googleHindi && (role === 'judge' || role === 'narrator' || role === 'banker' || hash % 2 === 0)) {
+            return googleHindi;
           }
-          const nonFemale = pool.filter((v) => !femaleRegex.test(v.name));
-          if (nonFemale.length > 0) {
-            return nonFemale[hash % nonFemale.length];
+          if (hemantOrMadhur.length > 0) {
+            return hemantOrMadhur[hash % hemantOrMadhur.length];
           }
-          return pool[hash % pool.length];
+          if (googleHindi) return googleHindi;
+          if (kalpanaOrSwara.length > 0) return kalpanaOrSwara[hash % kalpanaOrSwara.length];
+          if (hiAll.length > 0) return hiAll[hash % hiAll.length];
+          if (enInAll.length > 0) return enInAll[hash % enInAll.length];
+          return allVoices[hash % allVoices.length];
         };
 
         // Cancel cleanly first, then wait 55ms before calling speak() to avoid Chromium mid-sentence drop bug

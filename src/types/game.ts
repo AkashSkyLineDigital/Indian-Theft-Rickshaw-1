@@ -377,6 +377,9 @@ export interface GameSettings {
   shadowsEnabled: boolean;
   showControlsStrip: boolean;
   touchControls: 'auto' | 'on' | 'off';
+  touchButtonScale: number; // 0.75..1.35
+  touchOpacity: number; // 0.45..1.0
+  touchMovementStyle: 'joystick' | 'dpad';
 }
 
 export const DEFAULT_SETTINGS: GameSettings = {
@@ -390,6 +393,9 @@ export const DEFAULT_SETTINGS: GameSettings = {
   shadowsEnabled: true,
   showControlsStrip: true,
   touchControls: 'auto',
+  touchButtonScale: 1.0,
+  touchOpacity: 0.9,
+  touchMovementStyle: 'joystick',
 };
 
 export interface PassbookEntry {
@@ -449,6 +455,19 @@ export interface SavedGameState {
   gameMinutes?: number;
   dayCount?: number;
   probationDaysLeft?: number;
+  pendingLicenseRevocation?: number;
+  licenseRevokedPrompt?: LicenseRevokedPromptHud | null;
+  jailEscrowedWeapons?: WeaponId[];
+  jailEscrowedAmmo?: Partial<Record<WeaponId, number>>;
+  jailSentence?: {
+    starsAtArrest: number;
+    sentenceDaysTotal: number;
+    remainingDays: number;
+    wardenBribeCost: number;
+    workCount: number;
+    workShiftDoneToday: boolean;
+    pendingLicenseRevocation: number;
+  } | null;
   bank?: {
     savingsPrincipal: number;
     savingsInterest: number;
@@ -510,6 +529,7 @@ export interface WorldLabelHud {
   subtitle: string;
   screenX: number;
   screenY: number;
+  isClosest?: boolean;
   weaponId?: WeaponId;
   isDealer?: boolean;
   isBanker?: boolean;
@@ -629,7 +649,7 @@ export const CITY_LOCATIONS: CityLocationPreset[] = [
   { id: 'dm-office', label: 'DM Office (Arms & Driving License)', category: 'service', x: -90, z: 46, badge: 'L' },
   { id: 'district-court', label: 'District & Sessions Court', category: 'service', x: -90, z: 108, badge: '⚖' },
   { id: 'central-jail', label: 'Bharat Police Thana & Central Jail', category: 'service', x: -150, z: 176, badge: 'T' },
-  { id: 'pankaj-armory', label: 'Pankaj Ammunation', category: 'service', x: 30, z: -14, badge: 'G' },
+  { id: 'pankaj-armory', label: 'Pankaj Shastra Bhandar', category: 'service', x: 30, z: -14, badge: 'G' },
   { id: 'hospital', label: 'City Hospital', category: 'service', x: -30, z: 14, badge: '+' },
   { id: 'auto-stand', label: 'Chai Chowk Auto Stand', category: 'service', x: 7.5, z: 14, badge: 'A' },
   { id: 'chai-chowk', label: 'Sharma Chai Tapri', category: 'food', x: 10.2, z: 13.5, badge: 'C' },

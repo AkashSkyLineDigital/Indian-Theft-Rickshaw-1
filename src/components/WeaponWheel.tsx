@@ -100,12 +100,12 @@ export const WeaponWheel: React.FC<WeaponWheelProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-20 flex items-center justify-center bg-[#06090F]/55 select-none"
+      className="fixed inset-0 z-20 flex items-center justify-center bg-[#06090F]/55 select-none p-2"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="relative w-[390px] h-[390px] flex items-center justify-center">
+      <div className="relative w-[390px] h-[390px] flex items-center justify-center scale-[0.76] xs:scale-[0.88] sm:scale-100">
         {/* Outer radial ring */}
         <div className="absolute inset-4 rounded-full border-2 border-slate-700/60 bg-[#0B0E14]/70 pointer-events-none" />
 

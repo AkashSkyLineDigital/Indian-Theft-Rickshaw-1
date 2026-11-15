@@ -76,6 +76,7 @@ import {
   formatRsExact,
 } from '../types/game';
 import { soundEngine } from './audio';
+import { pickAmbientActorLine, pickHindiLine } from './hindiDialogues';
 import {
   AtmInfo,
   BuildingCollider,
@@ -660,6 +661,7 @@ export class GameEngine {
   // Input state
   private keys = new Set<string>();
   private mouseDownLeft = false;
+  private mouseDragging = false;
   private lastMouseX = 0;
   private lastMouseY = 0;
   private hasMousePos = false;
@@ -806,6 +808,72 @@ export class GameEngine {
       if (typeof saved.probationDaysLeft === 'number' && Number.isFinite(saved.probationDaysLeft)) {
         this.probationDaysLeft = Math.max(0, Math.floor(saved.probationDaysLeft));
       }
+      if (typeof saved.pendingLicenseRevocation === 'number' && Number.isFinite(saved.pendingLicenseRevocation)) {
+        this.pendingLicenseRevocation = Math.max(0, Math.floor(saved.pendingLicenseRevocation));
+      }
+      if (saved.licenseRevokedPrompt && saved.licenseRevokedPrompt.active) {
+        this.licenseRevokedPrompt = {
+          active: true,
+          starsAtArrest: Math.max(3, Math.floor(saved.licenseRevokedPrompt.starsAtArrest || 3)),
+          urgentFee: URGENT_THANA_LICENSE_RENEWAL_INR,
+          standardFee: GUN_LICENSE_FEE_INR,
+        };
+      }
+      if (Array.isArray(saved.jailEscrowedWeapons)) {
+        this.jailEscrowedWeapons = saved.jailEscrowedWeapons.filter(
+          (w): w is WeaponId => w !== 'fists' && WEAPON_ORDER.includes(w),
+        );
+      }
+      if (saved.jailEscrowedAmmo && typeof saved.jailEscrowedAmmo === 'object') {
+        const restoredAmmo: Partial<Record<WeaponId, number>> = {};
+        for (const wid of WEAPON_ORDER) {
+          if (wid === 'fists') continue;
+          const v = saved.jailEscrowedAmmo[wid];
+          if (typeof v === 'number' && Number.isFinite(v)) {
+            restoredAmmo[wid] = Math.max(0, Math.floor(v));
+          }
+        }
+        this.jailEscrowedAmmo = restoredAmmo;
+      }
+      if (saved.jailSentence && typeof saved.jailSentence.remainingDays === 'number' && saved.jailSentence.remainingDays > 0) {
+        const js = saved.jailSentence;
+        const phase = this.getJailSchedulePhase(this.gameMinutes);
+        const meta = this.getJailScheduleMeta(phase);
+        this.pendingLicenseRevocation = Math.max(
+          this.pendingLicenseRevocation,
+          Math.max(0, Math.floor(js.pendingLicenseRevocation || 0)),
+        );
+        const stars = Math.max(1, Math.min(5, Math.floor(js.starsAtArrest || 2)));
+        const sentenceDaysTotal = Math.max(1, Math.floor(js.sentenceDaysTotal || 2));
+        this.jailState = {
+          starsAtArrest: stars,
+          sentenceDaysTotal,
+          remainingDays: Math.max(0.1, Number(js.remainingDays)),
+          wardenBribeCost:
+            typeof js.wardenBribeCost === 'number' && Number.isFinite(js.wardenBribeCost)
+              ? Math.max(1000, Math.floor(js.wardenBribeCost))
+              : stars >= 4
+                ? JAIL_WARDEN_BRIBE_HIGH_INR
+                : JAIL_WARDEN_BRIBE_LOW_INR,
+          workCount: Math.max(0, Math.floor(js.workCount || 0)),
+          activeTaskKind: 'NONE',
+          taskTimer: 0,
+          taskDuration: 1,
+          taskStartX: this.playerX,
+          taskStartZ: this.playerZ,
+          spottedByGuard: false,
+          nearStation: null,
+          statusBanner: `Saza Jaari: ${Number(js.remainingDays).toFixed(1)} Din · ${meta.title}`,
+          spotCooldown: 0,
+          lastSchedulePhase: phase,
+          workShiftDoneToday: Boolean(js.workShiftDoneToday),
+          workSkipWarnTimer: 0,
+          distractionTimer: 0,
+          distractionCooldown: 0,
+          toiletCooldown: 0,
+          nearInmateDialogue: null,
+        };
+      }
       if (saved.bank && typeof saved.bank === 'object') {
         if (typeof saved.bank.savingsPrincipal === 'number' && Number.isFinite(saved.bank.savingsPrincipal)) {
           this.savingsPrincipal = Math.max(0, saved.bank.savingsPrincipal);
@@ -871,6 +939,21 @@ export class GameEngine {
         gameMinutes: Math.round(this.gameMinutes),
         dayCount: this.dayCount,
         probationDaysLeft: this.probationDaysLeft,
+        pendingLicenseRevocation: this.pendingLicenseRevocation,
+        licenseRevokedPrompt: this.licenseRevokedPrompt ? { ...this.licenseRevokedPrompt } : null,
+        jailEscrowedWeapons: [...this.jailEscrowedWeapons],
+        jailEscrowedAmmo: { ...this.jailEscrowedAmmo },
+        jailSentence: this.jailState
+          ? {
+              starsAtArrest: this.jailState.starsAtArrest,
+              sentenceDaysTotal: this.jailState.sentenceDaysTotal,
+              remainingDays: this.jailState.remainingDays,
+              wardenBribeCost: this.jailState.wardenBribeCost,
+              workCount: this.jailState.workCount,
+              workShiftDoneToday: this.jailState.workShiftDoneToday,
+              pendingLicenseRevocation: this.pendingLicenseRevocation,
+            }
+          : null,
         bank: {
           savingsPrincipal: this.savingsPrincipal,
           savingsInterest: this.savingsInterest,
@@ -1061,14 +1144,34 @@ export class GameEngine {
       isPlayer: true,
     });
     this.applyPlayerOutfit(this.playerOutfit);
-    if (!this.hasSavedGame && this.homeRig) {
+    if (this.jailState && this.jailRig) {
+      const phase = this.getJailSchedulePhase(this.gameMinutes);
+      this.disabledColliders.delete(this.jailRig.mainGateCollider);
+      this.disabledColliders.delete(this.jailRig.northGateCollider);
+      this.disabledColliders.delete(this.jailRig.eastGateCollider);
+      if (phase === 'NIGHT_LOCKUP') {
+        this.disabledColliders.delete(this.jailRig.cellGateCollider);
+        this.jailRig.cellGateDoor.position.z = 150 - 7.5;
+        this.playerX = this.jailRig.cellInsidePos.x;
+        this.playerY = 0.24;
+        this.playerZ = this.jailRig.cellInsidePos.z;
+      } else {
+        this.disabledColliders.add(this.jailRig.cellGateCollider);
+        this.jailRig.cellGateDoor.position.z = 150 - 7.5 - 3.0;
+        this.playerX = this.jailRig.yardCenter.x;
+        this.playerY = 0.24;
+        this.playerZ = this.jailRig.yardCenter.z;
+      }
+      this.ownedWeapons = new Set(['fists']);
+      this.activeWeapon = 'fists';
+    } else if (!this.hasSavedGame && this.homeRig) {
       this.playerX = this.homeRig.spawnPos.x;
       this.playerY = 0;
       this.playerZ = this.homeRig.spawnPos.z;
       this.playerYaw = 0;
       this.camYaw = 0;
     }
-    this.playerRig.helmetMesh.visible = this.hasHelmet && this.helmetOn;
+    this.playerRig.helmetMesh.visible = !this.jailState && this.hasHelmet && this.helmetOn;
     this.playerRig.root.position.set(this.playerX, this.playerY, this.playerZ);
     this.playerRig.root.rotation.y = this.playerYaw;
     this.scene.add(this.playerRig.root);
@@ -1129,8 +1232,8 @@ export class GameEngine {
 
     // Spawn 2 parked Starter Indian Motorcycles + 3 Roaming Street Motorcycles
     const parkedBikes = [
-      { x: -7.2, z: 13.5, yaw: 0, color: 0xb91c1c, name: 'Bharat Splendor Bike' },
-      { x: -84.0, z: 48.0, yaw: Math.PI / 2, color: 0x1d4ed8, name: 'Pulsar 180 Moto' },
+      { x: -7.2, z: 13.5, yaw: 0, color: 0xb91c1c, name: 'Bharat Chetak 100' },
+      { x: -84.0, z: 48.0, yaw: Math.PI / 2, color: 0x1d4ed8, name: 'Toofan 180 Moto' },
     ];
     for (const pb of parkedBikes) {
       const rig = createVehicleModel('bike', pb.color);
@@ -1356,7 +1459,7 @@ export class GameEngine {
       });
     });
 
-    // 4 White/Blue Indian Police Bolero Patrol Vehicles in left-hand lanes (capped at 1 or 2 officers)
+    // 4 White/Blue Police Vajra Patrol SUVs in left-hand lanes (capped at 1 or 2 officers)
     const copSpawns = [
       { rc: 60, along: -18, axis: 'x' as const, dir: 1 as const },
       { rc: -60, along: -36, axis: 'z' as const, dir: 1 as const },
@@ -1374,7 +1477,7 @@ export class GameEngine {
       this.scene.add(rig.root);
       this.vehicles.push({
         id: this.nextEntityId++,
-        name: 'Indian Police Bolero',
+        name: 'Police Vajra SUV',
         kind: 'police',
         rig,
         x: vx,
@@ -1819,6 +1922,7 @@ export class GameEngine {
     } else {
       this.keys.clear();
       this.mouseDownLeft = false;
+      this.mouseDragging = false;
     }
     if (this.pointerLockProbeId !== null) {
       window.clearTimeout(this.pointerLockProbeId);
@@ -1836,8 +1940,16 @@ export class GameEngine {
     }
   };
 
+  private isCoarsePointerDevice(): boolean {
+    return (
+      typeof window !== 'undefined' &&
+      Boolean(window.matchMedia?.('(pointer: coarse)').matches)
+    );
+  }
+
   private requestCanvasPointerLock(): void {
     if (
+      this.isCoarsePointerDevice() ||
       (this.mode !== 'PLAYING' && this.mode !== 'JAIL') ||
       this.weaponWheelOpen ||
       this.houseName === null ||
@@ -1871,6 +1983,13 @@ export class GameEngine {
     }
   }
 
+  public requestPointerLock(): void {
+    if (this.isCoarsePointerDevice()) return;
+    this.pointerLockBlocked = false;
+    this.syncCanvasCursor();
+    this.requestCanvasPointerLock();
+  }
+
   public releasePointerLock(): void {
     try {
       if (document.pointerLockElement === this.renderer.domElement) {
@@ -1878,6 +1997,29 @@ export class GameEngine {
       }
     } catch {
       // Ignore
+    }
+    this.syncCanvasCursor();
+  }
+
+  private syncCanvasCursor(): void {
+    const isPlayingOrJail = this.mode === 'PLAYING' || this.mode === 'JAIL';
+    this.renderer.domElement.style.cursor =
+      isPlayingOrJail && !this.firstPerson ? 'none' : '';
+  }
+
+  public captureSnapshotDataUrl(): string | null {
+    try {
+      this.renderer.render(this.scene, this.camera);
+      const src = this.renderer.domElement;
+      const out = document.createElement('canvas');
+      out.width = 256;
+      out.height = 160;
+      const ctx = out.getContext('2d');
+      if (!ctx) return null;
+      ctx.drawImage(src, 0, 0, out.width, out.height);
+      return out.toDataURL('image/jpeg', 0.45);
+    } catch {
+      return null;
     }
   }
 
@@ -1889,6 +2031,7 @@ export class GameEngine {
     this.hasMousePos = false;
     this.keys.clear();
     this.mouseDownLeft = false;
+    this.mouseDragging = false;
     if (this.weaponWheelOpen) {
       this.weaponWheelOpen = false;
       this.callbacks.onWeaponWheelChange(false);
@@ -1903,6 +2046,9 @@ export class GameEngine {
     if (this.disposed) return;
     const w = Math.max(1, this.container.clientWidth || window.innerWidth);
     const h = Math.max(1, this.container.clientHeight || window.innerHeight);
+    const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1;
+    const maxDpr = isMobile ? 1.5 : 2.0;
+    this.renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, maxDpr));
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
@@ -2054,7 +2200,11 @@ export class GameEngine {
       }
     }
 
-    if (code === 'KeyF') {
+    if (code === 'KeyR') {
+      this.triggerRadioChatter();
+    } else if (code === 'KeyG' && this.currentVehicle) {
+      this.triggerVehicleHorn();
+    } else if (code === 'KeyF') {
       this.toggleVehicle();
     } else if (code === 'KeyL') {
       this.toggleHelmet();
@@ -2213,7 +2363,7 @@ export class GameEngine {
     }
 
     if (distToPlayer > 16) {
-      this.callbacks.onToast({ text: 'Kharidne ke liye Pankaj Ammunation ke aur paas jaao!', tone: 'info' });
+      this.callbacks.onToast({ text: 'Kharidne ke liye Pankaj Shastra Bhandar ke aur paas jaao!', tone: 'info' });
       return true;
     }
 
@@ -2224,8 +2374,8 @@ export class GameEngine {
         'Pankaj Bhai',
         'dealer',
         999,
-        'Pankaj Ammunation mein swagat hai bhai! Asla dekho, daam saamne likha hai.',
-        'पंकज एम्युनेशन में स्वागत है भाई! असला देखो, दाम सामने लिखा है।',
+        'Pankaj Shastra Bhandar mein swagat hai bhai! Asla dekho, daam saamne likha hai.',
+        'पंकज शस्त्र भंडार में स्वागत है भाई! असला देखो, दाम सामने लिखा है।',
       );
       this.releasePointerLock();
       this.callbacks.onShopDealerClick();
@@ -2284,23 +2434,29 @@ export class GameEngine {
 
     if (e.button === 0) {
       const wasLocked = document.pointerLockElement === this.renderer.domElement;
-      const isCoarseTouch =
-        typeof window !== 'undefined' &&
-        window.matchMedia?.('(pointer: coarse)').matches;
-      if (!wasLocked && !this.pointerLockBlocked && !isCoarseTouch) {
-        // Consume this click solely to lock the desktop mouse cursor without firing a shot
+      const isCoarseTouch = this.isCoarsePointerDevice();
+      if (!wasLocked && !isCoarseTouch) {
+        const prevBlocked = this.pointerLockBlocked;
         this.requestCanvasPointerLock();
-        return;
+        if (!prevBlocked) {
+          // Consume this first click solely to lock desktop pointer without misfiring
+          this.mouseDragging = true;
+          return;
+        }
       }
+      this.mouseDragging = true;
       this.mouseDownLeft = true;
       if (!this.currentVehicle) {
         this.tryPlayerAttack();
       }
+    } else if (e.button === 2) {
+      this.mouseDragging = true;
     }
   };
 
   private handleMouseUp = (e: MouseEvent): void => {
     if (e.button === 0) this.mouseDownLeft = false;
+    if (e.button === 0 || e.button === 2) this.mouseDragging = false;
   };
 
   private handleMouseMove = (e: MouseEvent): void => {
@@ -2318,6 +2474,13 @@ export class GameEngine {
       dx = e.movementX || 0;
       dy = e.movementY || 0;
     } else {
+      // Smooth click-and-drag fallback rotation when Pointer Lock is blocked by an iframe sandbox
+      if (!this.mouseDragging && (e.buttons & 1) === 0 && (e.buttons & 2) === 0) {
+        this.lastMouseX = e.clientX;
+        this.lastMouseY = e.clientY;
+        this.hasMousePos = true;
+        return;
+      }
       if (!this.hasMousePos) {
         this.lastMouseX = e.clientX;
         this.lastMouseY = e.clientY;
@@ -2369,6 +2532,7 @@ export class GameEngine {
     this.camPitch = this.firstPerson ? clamp(this.camPitch - 0.28, -0.45, 0.45) : clamp(this.camPitch + 0.25, 0.16, 0.85);
     this.playerRig.root.visible = !this.currentVehicle && !this.firstPerson;
     this.refreshPlayerWeaponMesh();
+    this.syncCanvasCursor();
     soundEngine.playUiClick();
     this.callbacks.onToast({
       text: this.firstPerson ? 'First-Person View ON (Press C for 3rd Person)' : 'Third-Person View ON',
@@ -2411,6 +2575,34 @@ export class GameEngine {
   public triggerEnterExit(): void {
     soundEngine.unlock();
     this.toggleVehicle();
+  }
+
+  public triggerVehicleHorn(): void {
+    if (this.mode !== 'PLAYING' || !this.currentVehicle) return;
+    soundEngine.unlock();
+    const kind =
+      this.currentVehicle.kind === 'rickshaw'
+        ? 'rickshaw'
+        : this.currentVehicle.kind === 'bike'
+          ? 'bike'
+          : 'car';
+    soundEngine.playVehicleHorn(kind);
+    // Nearby calm pedestrians briefly glance or step clear
+    for (const npc of this.npcs) {
+      if (npc.dead || npc.isPolice || npc.landmarkKind) continue;
+      const d = Math.hypot(npc.x - this.playerX, npc.z - this.playerZ);
+      if (d < 8.5) {
+        npc.targetYaw = Math.atan2(-(npc.x - this.playerX), -(npc.z - this.playerZ));
+      }
+    }
+  }
+
+  public triggerRadioChatter(): void {
+    if (this.mode !== 'PLAYING') return;
+    soundEngine.unlock();
+    soundEngine.playPoliceRadioChatter();
+    const line = pickHindiLine('thana_radio');
+    this.speakWithSubtitle('Bharat Police Wireless', 'officer', 704, line.text, line.tts, 'normal');
   }
 
   public setWeaponWheelOpen(open: boolean): void {
@@ -3043,13 +3235,8 @@ export class GameEngine {
             remaining: 3.4,
             duration: 3.4,
           };
-          this.speakWithSubtitle(
-            'Maulana Tariq Sahab',
-            'citizen',
-            501,
-            'Walykum aslam bhai! Allah aapko hamesha salamat aur aman mein rakhe.',
-            'वालेकुम अस्सलाम भाई! अल्लाह आपको हमेशा सलामत और अमन में रखे।',
-          );
+          const line = pickHindiLine('sacred_mosque');
+          this.speakWithSubtitle('Maulana Tariq Sahab', 'citizen', 501, line.text, line.tts);
           this.callbacks.onToast({ text: 'Noor Masjid · Blessed (45s HP & Stamina Regen)', tone: 'cash' });
         } else if (nearSacred.kind === 'ram_mandir') {
           soundEngine.playTempleBell();
@@ -3061,13 +3248,8 @@ export class GameEngine {
             remaining: 3.4,
             duration: 3.4,
           };
-          this.speakWithSubtitle(
-            'Pandit Raghavendra Shastri',
-            'citizen',
-            502,
-            'Jai Shree Ram! Prabhu Ramchandra ji ki kripa sada aap par bani rahe.',
-            'जय श्री राम! प्रभु श्री रामचंद्र जी की कृपा सदा आप पर बनी रहे।',
-          );
+          const line = pickHindiLine('sacred_ram_mandir');
+          this.speakWithSubtitle('Pandit Raghavendra Shastri', 'citizen', 502, line.text, line.tts);
           this.callbacks.onToast({ text: 'Shree Ram Mandir · Blessed (45s HP & Stamina Regen)', tone: 'cash' });
         } else {
           soundEngine.playTempleBell();
@@ -3079,13 +3261,8 @@ export class GameEngine {
             remaining: 3.4,
             duration: 3.4,
           };
-          this.speakWithSubtitle(
-            'Pandit Gopalacharya',
-            'citizen',
-            503,
-            'Radhe Radhe! Jai Shree Krishna! Bhakt par sada sukh aur shanti rahe.',
-            'राधे राधे! जय श्री कृष्ण! आप पर सदा सुख और शांति बनी रहे।',
-          );
+          const line = pickHindiLine('sacred_krishna_mandir');
+          this.speakWithSubtitle('Pandit Gopalacharya', 'citizen', 503, line.text, line.tts);
           this.callbacks.onToast({ text: 'Shree Krishna Mandir · Blessed (45s HP & Stamina Regen)', tone: 'cash' });
         }
         this.emitHudSnapshot();
@@ -3408,12 +3585,13 @@ export class GameEngine {
     const successChance = this.wantedLevel === 1 ? 0.58 : 0.45;
     if (Math.random() < successChance) {
       soundEngine.playCashPickup();
+      const acceptLine = pickHindiLine('bribe_accept');
       this.speakWithSubtitle(
         nearestCop.name,
         'officer',
         nearestCop.id,
-        'Chalo bhai, aaj jaane deta hoon... aage se dhyan rakhna!',
-        'चलो भाई, आज जाने देता हूँ... आगे से ध्यान रखना!',
+        acceptLine.text,
+        acceptLine.tts,
       );
       this.clearWanted();
       this.callbacks.onToast({
@@ -3429,12 +3607,13 @@ export class GameEngine {
     nearestCop.bribeRefused = true;
     nearestCop.hostile = true;
     soundEngine.playPoliceWhistle();
+    const refuseLine = pickHindiLine('bribe_refuse');
     this.speakWithSubtitle(
       nearestCop.name,
       'officer',
       nearestCop.id,
-      'Mujhe rishwat deta hai?! Badtameez, ab seedha lockup chal!',
-      'मुझे रिश्वत देता है?! बदतमीज़, अब सीधा लॉकअप चल!',
+      refuseLine.text,
+      refuseLine.tts,
     );
     this.setWantedLevelSafe(Math.min(3, this.wantedLevel + 1));
     this.callbacks.onToast({
@@ -3453,9 +3632,11 @@ export class GameEngine {
 
   public setMode(next: GameMode): void {
     if (this.mode === next) return;
+    const prevMode = this.mode;
     this.mode = next;
     this.keys.clear();
     this.mouseDownLeft = false;
+    this.mouseDragging = false;
     this.hasMousePos = false;
     this.touchMoveX = 0;
     this.touchMoveY = 0;
@@ -3464,7 +3645,10 @@ export class GameEngine {
     if (next !== 'PLAYING' && next !== 'JAIL') {
       this.adsActive = false;
       this.releasePointerLock();
+    } else if (prevMode === 'PAUSED' || prevMode === 'TITLE') {
+      this.requestPointerLock();
     }
+    this.syncCanvasCursor();
     if (this.weaponWheelOpen) {
       this.weaponWheelOpen = false;
       this.callbacks.onWeaponWheelChange(false);
@@ -3494,7 +3678,7 @@ export class GameEngine {
 
   public startGame(): void {
     soundEngine.unlock();
-    this.setMode('PLAYING');
+    this.setMode(this.jailState ? 'JAIL' : 'PLAYING');
   }
 
   public updateSettings(next: GameSettings): void {
@@ -3617,7 +3801,7 @@ export class GameEngine {
 
   public applyCheat(rawCode: string): { ok: boolean; message: string } {
     const code = rawCode.trim().toUpperCase();
-    if (code === 'HESOYAM') {
+    if (code === 'PAISABARSAO') {
       this.playerCash += 2100000;
       this.playerHp = this.playerMaxHp;
       this.playerArmor = 100;
@@ -3625,9 +3809,9 @@ export class GameEngine {
       soundEngine.playCashPickup();
       this.saveGameState();
       this.emitHudSnapshot();
-      return { ok: true, message: `HESOYAM activated: +${formatRs(2100000)}, Full Health & Armor.` };
+      return { ok: true, message: `PAISABARSAO activated: +${formatRs(2100000)}, Full Health & Armor.` };
     }
-    if (code === 'LXGIWYL' || code === 'UZUMYMW') {
+    if (code === 'SHASTRA100') {
       for (const w of WEAPON_ORDER) {
         this.ownedWeapons.add(w);
         if (w !== 'fists') {
@@ -3640,30 +3824,30 @@ export class GameEngine {
       soundEngine.playCashPickup();
       this.saveGameState();
       this.emitHudSnapshot();
-      return { ok: true, message: 'Armory unlocked with full ammunition.' };
+      return { ok: true, message: 'SHASTRA100 activated: Full armory & ammunition unlocked.' };
     }
-    if (code === 'AEZAKMI') {
+    if (code === 'VIPPASS') {
       this.noPoliceCheat = !this.noPoliceCheat;
       if (this.noPoliceCheat) {
         this.clearWanted();
       }
       this.callbacks.onToast({
-        text: this.noPoliceCheat ? 'CHEAT: Never Wanted ON' : 'CHEAT: Never Wanted OFF',
+        text: this.noPoliceCheat ? 'CHEAT: VIPPASS (Never Wanted ON)' : 'CHEAT: VIPPASS (Never Wanted OFF)',
         tone: 'cheat',
       });
       this.emitHudSnapshot();
       return {
         ok: true,
-        message: this.noPoliceCheat ? 'Police immunity enabled.' : 'Police immunity disabled.',
+        message: this.noPoliceCheat ? 'VIPPASS activated: Police immunity enabled.' : 'VIPPASS disabled.',
       };
     }
-    if (code === 'ASNAEB') {
+    if (code === 'NOCHALLAN') {
       this.clearWanted();
       this.callbacks.onToast({ text: 'CHEAT: Wanted Level Cleared', tone: 'cheat' });
       this.emitHudSnapshot();
-      return { ok: true, message: 'Wanted stars cleared.' };
+      return { ok: true, message: 'NOCHALLAN activated: Wanted stars cleared.' };
     }
-    return { ok: false, message: 'Unknown cheat code. Try HESOYAM, LXGIWYL, AEZAKMI, or ASNAEB.' };
+    return { ok: false, message: 'Unknown cheat code. Try PAISABARSAO, SHASTRA100, NOCHALLAN, or VIPPASS.' };
   }
 
   private performPartialWorldCleanup(restoreHijackedVehicles: boolean): void {
@@ -3919,73 +4103,82 @@ export class GameEngine {
               ? 'चार दिन'
               : 'पांच दिन';
 
+    const openLine = pickHindiLine('judge_open', { stars: starsAtArrest });
+    const chargeLine = pickHindiLine('inspector_charge', {
+      primary: primaryCharge,
+      secondary: secondaryCharge,
+    });
+    const vakilLine = pickHindiLine(
+      hasFatalCharge || verdictKind === 'NO_BAIL'
+        ? 'vakil_serious'
+        : verdictKind === 'BAILABLE'
+          ? 'vakil_bailable'
+          : 'vakil_high_bail',
+    );
+    const rebuttalLine = pickHindiLine(
+      hasFatalCharge
+        ? 'inspector_rebuttal_fatal'
+        : verdictKind === 'NO_BAIL'
+          ? 'inspector_rebuttal_serious'
+          : 'inspector_rebuttal_normal',
+      { fatalities: totalFatalities },
+    );
+    const orderLine = pickHindiLine(
+      hasFatalCharge
+        ? 'judge_order_fatal'
+        : verdictKind === 'BAILABLE'
+          ? 'judge_order_bail'
+          : verdictKind === 'HIGH_BAIL'
+            ? 'judge_order_high_bail'
+            : 'judge_order_nobail',
+      {
+        bailRs: formatRs(bailAmount),
+        lawyerRs: formatRs(lawyerFee),
+        bailWords,
+        lawyerWords,
+        jailDays,
+        jailDayWords,
+        interimNote: interimBailEligible
+          ? ' (Agar aap Senior Advocate rakhkar aatmaraksha sabit karna chahein to neeche sakht sharton par Conditional Interim Bail ka vikalp dekh sakte hain.)'
+          : '',
+      },
+    );
+
     const dialogueTurns: CourtroomDialogueTurn[] = [
       {
         speakerRole: 'judge',
         speakerName: 'Hon. Judge S.K. Deshmukh',
         title: 'District & Sessions Judge',
-        text: `Court ki karyawahi shuru hoti hai! ${starsAtArrest}★ case mein mulzim kathgare mein khada hai. Inspector, BNS ke tahat aarop pesh karein.`,
-        tts: `कोर्ट की कार्यवाही शुरू होती है! ${starsAtArrest} स्टार केस में मुल्ज़िम कठघरे में खड़ा है। इंस्पेक्टर, बीएनएस के तहत आरोप पेश करें।`,
+        text: openLine.text,
+        tts: openLine.tts,
       },
       {
         speakerRole: 'inspector',
         speakerName: 'Inspector Vijay Rathore',
         title: 'Arresting Officer · Bharat Police',
-        text: `Your Honour! Chargesheet mein "${primaryCharge}" aur "${secondaryCharge}" darj hain. Mulzim ke khilaf pakke gawah aur saboot maujood hain.`,
-        tts: `योर ऑनर! चार्जशीट में ${primaryCharge} और ${secondaryCharge} दर्ज हैं। मुल्ज़िम के खिलाफ पक्के गवाह और सबूत मौजूद हैं।`,
+        text: chargeLine.text,
+        tts: chargeLine.tts,
       },
       {
         speakerRole: 'lawyer',
         speakerName: 'Adv. Meera Sharma',
         title: 'Defense Vakil',
-        text: hasFatalCharge
-          ? `My Lord, yeh maamla Section 103 BNS ka zaroor hai, par mere client ka kehna hai ki ghatna aatmaraksha aur apratyakshit halaat mein hui. Nyayik dayalu drishti rakhi jaaye.`
-          : verdictKind === 'BAILABLE'
-            ? `Maai-baap, kisi ki jaan nahi gayi hai — yeh chhota bailable maamla hai! Mere client ne galti maani hai, naram zamanat par rihaai di jaaye.`
-            : verdictKind === 'HIGH_BAIL'
-              ? `Your Honour, maamla gambhir zaroor hai par koi fatal injury nahi hui. Bhari zamanat rakhkar bail manzoor ki jaaye.`
-              : `My Lord, police ne aatmaraksha ke halaat ko badha-chadhakar dikhaya hai! Mere client ko ek mauka diya jaaye.`,
-        tts: hasFatalCharge
-          ? `माई लॉर्ड, यह मामला सेक्शन एक सौ तीन बीएनएस का ज़रूर है, पर मेरे क्लाइंट का कहना है कि घटना आत्मरक्षा और अप्रत्याशित हालात में हुई।`
-          : verdictKind === 'BAILABLE'
-            ? `माई-बाप, किसी की जान नहीं गई है — यह छोटा ज़मानती मामला है! मेरे क्लाइंट ने गलती मानी है, नरम ज़मानत पर रिहाई दी जाए।`
-            : verdictKind === 'HIGH_BAIL'
-              ? `योर ऑनर, मामला गंभीर ज़रूर है पर कोई जानलेवा नुकसान नहीं हुआ। भारी ज़मानत रखकर बेल मंजूर की जाए।`
-              : `माई लॉर्ड, पुलिस ने आत्मरक्षा के हालात को बढ़ा-चढ़ाकर दिखाया है! मेरे क्लाइंट को एक मौका और दिया जाए।`,
+        text: vakilLine.text,
+        tts: vakilLine.tts,
       },
       {
         speakerRole: 'inspector',
         speakerName: 'Inspector Vijay Rathore',
         title: 'Prosecution Rebuttal',
-        text: hasFatalCharge
-          ? `Sakht aitaraz Your Honour! Section 103 BNS ke tahat ${totalFatalities} jaan gayi hai — aise aropi ko mamuli bail dena nyay aur kanoon ke khilaf hoga!`
-          : verdictKind === 'NO_BAIL'
-            ? `Sakht aitaraz Your Honour! Mulzim ne SWAT/Army aur kanoon par seedha hamla kiya hai — isko bahar chhodna shehar ke liye khatra hoga!`
-            : `Court sahab, BNS niyamon ke mutabik shehar mein kanoon-vyavastha banaye rakhne ke liye is par uchit jurmana lagna zaroori hai.`,
-        tts: hasFatalCharge
-          ? `सख्त ऐतराज़ योर ऑनर! सेक्शन एक सौ तीन बीएनएस के तहत जान गई है — ऐसे आरोपी को मामूली बेल देना न्याय और कानून के खिलाफ होगा!`
-          : verdictKind === 'NO_BAIL'
-            ? `सख्त ऐतराज़ योर ऑनर! मुल्ज़िम ने स्वाट आर्मी और कानून पर सीधा हमला किया है — इसको बाहर छोड़ना शहर के लिए खतरा होगा!`
-            : `कोर्ट साहब, बीएनएस नियमों के मुताबिक शहर में कानून-व्यवस्था बनाए रखने के लिए इस पर उचित जुर्माना लगना ज़रूरी है।`,
+        text: rebuttalLine.text,
+        tts: rebuttalLine.tts,
       },
       {
         speakerRole: 'judge',
         speakerName: 'Hon. Judge S.K. Deshmukh',
         title: 'Final Court Order',
-        text: hasFatalCharge
-          ? `Kisi ki jaan lena koi mamuli baat nahi hai, Section 103 BNS [IPC 302] ek gambhir non-bailable apradh hai! Zamanat kharij! Mulzim ko ${jailDays} din Bharat Central Jail bheja jaata hai.${interimBailEligible ? ' (Agar aap Senior Advocate rakhkar aatmaraksha sabit karna chahein to neeche sakht sharton par Conditional Interim Bail ka vikalp dekh sakte hain.)' : ''}`
-          : verdictKind === 'BAILABLE'
-            ? `Kisi jaan ka nuksan na hone ke karan BNS ke tahat bailable maamla maankar: ${formatRs(bailAmount)} Bail Bond aur ${formatRs(lawyerFee)} Vakil Fee par Zamanat Manzoor ki jaati hai!`
-            : verdictKind === 'HIGH_BAIL'
-              ? `Aaropon ki gambhirta dekhte hue: ${formatRs(bailAmount)} Bhari Zamanat + ${formatRs(lawyerFee)} Vakil Fee bharo, warna ${jailDays} din Bharat Central Jail!`
-              : `Sangeen aur gair-zamanati aarop saabit! Zamanat kharij! Mulzim ko seedha ${jailDays} din Bharat Central Jail bheja jaata hai!`,
-        tts: hasFatalCharge
-          ? `किसी की जान लेना कोई मामूली बात नहीं है, सेक्शन एक सौ तीन बीएनएस एक गंभीर नॉन-बेलेबल अपराध है! ज़मानत ख़ारिज! मुल्ज़िम को ${jailDayWords} भारत सेंट्रल जेल भेजा जाता है!`
-          : verdictKind === 'BAILABLE'
-            ? `सभी पक्षों को सुनने के बाद: ${bailWords} बेल बॉन्ड और ${lawyerWords} वकील फीस पर ज़मानत मंजूर की जाती है!`
-            : verdictKind === 'HIGH_BAIL'
-              ? `आरोपों की गंभीरता देखते हुए: ${bailWords} भारी ज़मानत और ${lawyerWords} वकील फीस भरो, वरना ${jailDayWords} भारत सेंट्रल जेल!`
-              : `संगीन और गैर-ज़मानती आरोप साबित! ज़मानत ख़ारिज! मुल्ज़िम को सीधा ${jailDayWords} भारत सेंट्रल जेल भेजा जाता है!`,
+        text: orderLine.text,
+        tts: orderLine.tts,
       },
     ];
 
@@ -4619,6 +4812,7 @@ export class GameEngine {
 
     soundEngine.playJailDoorClang();
     this.setMode('JAIL');
+    this.saveGameState();
     this.speakWithSubtitle(
       'Jailer Mahendra Pal',
       'warden',
@@ -4635,13 +4829,19 @@ export class GameEngine {
       this.disabledColliders.add(rig.cellGateCollider);
       rig.cellGateDoor.position.z = 150 - 7.5 - 3.0;
     }
-    // Restore escrowed weapons (if license won't be revoked on release, or user keeps them safely until renewal)
-    for (const wid of this.jailEscrowedWeapons) {
-      this.ownedWeapons.add(wid);
-      this.ammo[wid] = Math.max(this.ammo[wid], this.jailEscrowedAmmo[wid] ?? 0);
+    if (exitMode === 'ESCAPE') {
+      // Prison escape leaves confiscated weapons locked inside evidence (not returned to escapee)
+      this.jailEscrowedWeapons = [];
+      this.jailEscrowedAmmo = {};
+    } else {
+      // Restore escrowed weapons on legal release or settled release
+      for (const wid of this.jailEscrowedWeapons) {
+        this.ownedWeapons.add(wid);
+        this.ammo[wid] = Math.max(this.ammo[wid], this.jailEscrowedAmmo[wid] ?? 0);
+      }
+      this.jailEscrowedWeapons = [];
+      this.jailEscrowedAmmo = {};
     }
-    this.jailEscrowedWeapons = [];
-    this.jailEscrowedAmmo = {};
     this.jailState = null;
 
     this.playerY = 0;
@@ -5618,6 +5818,7 @@ export class GameEngine {
     this.spawnStreetDogs(4);
 
     this.wastedLock = false;
+    this.bustedLock = false;
     this.playerHp = this.playerMaxHp;
     this.playerArmor = 0;
     this.playerStamina = this.playerMaxStamina;
@@ -5768,6 +5969,7 @@ export class GameEngine {
 
     if (this.chopper) {
       this.scene.remove(this.chopper.rig.root);
+      this.scene.remove(this.chopper.rig.spotLight.target);
       this.chopper = null;
     }
     for (const rb of this.roadblocks) {
@@ -6272,7 +6474,7 @@ export class GameEngine {
     // Firearm
     if (this.ammo[this.activeWeapon] <= 0) {
       soundEngine.playDryFire();
-      this.callbacks.onToast({ text: 'Goliyan khatam! Pankaj Ammunation jaao ya hathiyar badlo', tone: 'warn' });
+      this.callbacks.onToast({ text: 'Goliyan khatam! Pankaj Shastra Bhandar jaao ya hathiyar badlo', tone: 'warn' });
       return;
     }
 
@@ -7103,25 +7305,15 @@ export class GameEngine {
       beepAccum: 0.4,
     };
 
-    const lines =
+    const picked = pickHindiLine(
       reason === 'vehicle_theft'
-        ? [
-            { display: 'Oye! Ye gaadi chura raha hai... abhi 100 number lagata hoon!', tts: 'ओये! ये गाड़ी चुरा रहा है... अभी सौ नंबर लगाता हूँ!' },
-            { display: 'Chor! Gaadi chura ke le gaya, police ko phone karo!', tts: 'चोर! गाड़ी चुरा के ले गया, पुलिस को फोन करो!' },
-          ]
+        ? 'witness_call_theft'
         : reason === 'murder' || reason === 'assault'
-          ? [
-              { display: 'Bachao! Police ko phone kar raha hoon, abhi aate hain!', tts: 'बचाओ! पुलिस को फोन कर रहा हूँ, अभी आते हैं!' },
-              { display: '100 number lagao! Yahan maar-peet ho rahi hai!', tts: 'सौ नंबर लगाओ! यहाँ मार-पीट हो रही है!' },
-            ]
-          : [
-              { display: 'Bhai, ye banduk... main abhi police ko bulata hoon!', tts: 'भाई, ये बंदूक... मैं अभी पुलिस को बुलाता हूँ!' },
-              { display: 'Are baap re! Iske haath mein banduk hai... 100 number milao!', tts: 'अरे बाप रे! इसके हाथ में बंदूक है... सौ नंबर मिलाओ!' },
-              { display: 'Police ko phone karo! Yahan khule-aam hathiyar dikha raha hai!', tts: 'पुलिस को फोन करो! यहाँ खुलेआम हथियार दिखा रहा है!' },
-            ];
-    const picked = lines[bestNpc.id % lines.length];
+          ? 'witness_call_assault'
+          : 'witness_call_gun',
+    );
     soundEngine.playPhoneDialBeep();
-    this.speakWithSubtitle(bestNpc.name, 'citizen', bestNpc.id, picked.display, picked.tts);
+    this.speakWithSubtitle(bestNpc.name, 'citizen', bestNpc.id, picked.text, picked.tts);
     return true;
   }
 
@@ -7241,7 +7433,7 @@ export class GameEngine {
 
   private spawnTacticalReinforcementVehicle(
     kind: 'police' | 'swat_van' | 'army_truck' | 'armored_apc',
-    unitTier: 2 | 3 | 5,
+    unitTier: 2 | 3 | 4 | 5,
   ): void {
     const angle = Math.random() * Math.PI * 2;
     const sx = clamp(this.playerX + Math.cos(angle) * 58, -WORLD_LIMIT + 16, WORLD_LIMIT - 16);
@@ -7254,8 +7446,8 @@ export class GameEngine {
     this.scene.add(rig.root);
 
     const names: Record<typeof kind, string> = {
-      police: 'Police Patrol Cruiser',
-      swat_van: 'STF SWAT Tactical SUV',
+      police: 'Police Vajra SUV',
+      swat_van: unitTier === 4 ? 'Commando 4x4' : 'STF SWAT Tactical SUV',
       army_truck: 'Indian Army Convoy Truck',
       armored_apc: 'Army Armored APC',
     };
@@ -7437,7 +7629,7 @@ export class GameEngine {
       // 4★: Elite Commandos + Chopper (Chopper updated in stepPoliceChopper)
       const swatVans = this.vehicles.filter((v) => !v.destroyed && v.kind === 'swat_van');
       if (swatVans.length < 2) {
-        this.spawnTacticalReinforcementVehicle('swat_van', 3);
+        this.spawnTacticalReinforcementVehicle('swat_van', 4);
       }
       if (aliveCops.filter((c) => c.isCommando).length < 4) {
         const angle = Math.random() * Math.PI * 2;
@@ -7482,7 +7674,7 @@ export class GameEngine {
       !this.noPoliceCheat &&
       this.licenseGraceTimer <= 0 &&
       !this.isNearLicenseRange() &&
-      Math.hypot(this.playerX - 30, this.playerZ - -29) > 15; // Safe inside Pankaj Ammunation!
+      Math.hypot(this.playerX - 30, this.playerZ - -29) > 15; // Safe inside Pankaj Shastra Bhandar!
 
     if (holdingGunInPublic && !this.activeWitness && !this.policeInspection) {
       this.brandishExposeTimer += dt;
@@ -7544,12 +7736,13 @@ export class GameEngine {
             insp.phase = 'ASKING';
             insp.timer = 12;
             soundEngine.playPoliceWhistle();
+            const checkLine = pickHindiLine('police_license_check');
             this.speakWithSubtitle(
               cop.name,
               'officer',
               cop.id,
-              'Ruko! Apna arms license dikhao!',
-              'रुको! अपना आर्म्स लाइसेंस दिखाओ!',
+              checkLine.text,
+              checkLine.tts,
             );
           } else if (dist > 56 || insp.timer <= 0) {
             this.respondToLicenseCheck(false);
@@ -7896,12 +8089,13 @@ export class GameEngine {
           this.playerCash -= NO_HELMET_FINE_INR;
           soundEngine.playPoliceWhistle();
           spotCop.yaw = Math.atan2(-(this.playerX - spotCop.x), -(this.playerZ - spotCop.z));
+          const helmetLine = pickHindiLine('traffic_no_helmet', { fine: formatRs(NO_HELMET_FINE_INR) });
           this.speakWithSubtitle(
             spotCop.name,
             'officer',
             spotCop.id,
-            `Oye! Bina helmet bike chalata hai? ${formatRs(NO_HELMET_FINE_INR)} challan bharo aur helmet pehno!`,
-            'ओये! बिना हेलमेट बाइक चलाता है? पांच सौ रुपये चालान भरो और हेलमेट पहनो!',
+            helmetLine.text,
+            helmetLine.tts,
           );
           this.callbacks.onToast({
             text: `TRAFFIC CHALLAN: Bina Helmet -${formatRs(NO_HELMET_FINE_INR)} ([L] se Helmet pehno)`,
@@ -7918,12 +8112,13 @@ export class GameEngine {
           this.playerCash -= NO_DL_FINE_INR;
           soundEngine.playPoliceWhistle();
           spotCop.yaw = Math.atan2(-(this.playerX - spotCop.x), -(this.playerZ - spotCop.z));
+          const dlLine = pickHindiLine('traffic_no_dl', { fine: formatRs(NO_DL_FINE_INR) });
           this.speakWithSubtitle(
             spotCop.name,
             'officer',
             spotCop.id,
-            `Ruko! Bina Driving License ke gaadi chala rahe ho? ${formatRs(NO_DL_FINE_INR)} challan!`,
-            'रुको! बिना ड्राइविंग लाइसेंस के गाड़ी चला रहे हो? दो हज़ार रुपये चालान!',
+            dlLine.text,
+            dlLine.tts,
           );
           this.callbacks.onToast({
             text: `TRAFFIC CHALLAN: Bina Driving License -${formatRs(NO_DL_FINE_INR)} (DM Office se DL banwao)`,
@@ -7980,12 +8175,13 @@ export class GameEngine {
         if (nearestFootCop) {
           soundEngine.playPoliceWhistle();
           nearestFootCop.yaw = Math.atan2(-(this.playerX - nearestFootCop.x), -(this.playerZ - nearestFootCop.z));
+          const redLine = pickHindiLine('traffic_red_light');
           this.speakWithSubtitle(
             nearestFootCop.name,
             'officer',
             nearestFootCop.id,
-            'Oye! Laal batti paar karta hai? Sambhal ke chala!',
-            'ओये! लाल बत्ती पार करता है? संभल के चला!',
+            redLine.text,
+            redLine.tts,
           );
           this.callbacks.onToast({
             text: `Traffic Police ne seeti bajayi! Laal batti mat todo (${this.redLightViolations}/3)`,
@@ -9075,6 +9271,7 @@ export class GameEngine {
           this.wantedDecayTimer = 14;
           if (this.wantedLevel < 4 && this.chopper) {
             this.scene.remove(this.chopper.rig.root);
+            this.scene.remove(this.chopper.rig.spotLight.target);
             this.chopper = null;
             soundEngine.setChopperActive(false);
           }
@@ -9876,49 +10073,12 @@ export class GameEngine {
           this.thanaAmbientBubbleTimer -= dt;
           if (this.thanaAmbientBubbleTimer <= 0) {
             this.thanaAmbientBubbleTimer = 7.5 + Math.random() * 4;
-            const lines: { speaker: string; role: 'officer' | 'citizen'; seed: number; display: string; tts: string }[] = [
-              {
-                speaker: 'Hawaldaar Ramesh',
-                role: 'officer',
-                seed: 702,
-                display: 'Control Room Alpha-4, Thana Number 4 duty report clear — over!',
-                tts: 'कंट्रोल रूम अल्फा चार, थाना नंबर चार ड्यूटी रिपोर्ट क्लियर — ओवर!',
-              },
-              {
-                speaker: 'Fariyadi Suresh',
-                role: 'citizen',
-                seed: 705,
-                display: 'Sahab mera scooter bazaar se chori ho gaya, jaldi FIR likh lijiye!',
-                tts: 'साहब मेरा स्कूटर बाज़ार से चोरी हो गया, जल्दी एफआईआर लिख लीजिए!',
-              },
-              {
-                speaker: 'Duty Constable',
-                role: 'officer',
-                seed: 703,
-                display: 'Register number teen lao aur sabhi patrolling units ko alert rakho!',
-                tts: 'रजिस्टर नंबर तीन लाओ और सभी पेट्रोलिंग यूनिट्स को अलर्ट रखो!',
-              },
-            ];
-            if (this.thanaPrisonerActiveCount > 0) {
-              lines.push(
-                {
-                  speaker: 'Lockup Constable',
-                  role: 'officer',
-                  seed: 709,
-                  display: 'Chup-chaap lockup mein baith! Zyada halla kiya toh danda padega!',
-                  tts: 'चुप-चाप लॉकअप में बैठ! ज़्यादा हल्ला किया तो डंडा पड़ेगा!',
-                },
-                {
-                  speaker: 'Kaidi Bunty',
-                  role: 'citizen',
-                  seed: 710,
-                  display: 'Sahab ek cup chai pila do, subah se lockup mein hoon!',
-                  tts: 'साहब एक कप चाय पिला दो, सुबह से लॉकअप में हूँ!',
-                },
-              );
-            }
-            const pick = lines[Math.floor(Math.random() * lines.length)];
-            this.speakWithSubtitle(pick.speaker, pick.role, pick.seed, pick.display, pick.tts, 'low');
+            const pick = pickAmbientActorLine(
+              this.thanaPrisonerActiveCount > 0 && Math.random() < 0.55
+                ? 'thana_lockup_ambient'
+                : 'thana_ambient',
+            );
+            this.speakWithSubtitle(pick.speaker, pick.role, pick.seed, pick.text, pick.tts, 'low');
           }
         }
       }
@@ -9966,44 +10126,8 @@ export class GameEngine {
         this.courtAmbientBubbleTimer -= dt;
         if (this.courtAmbientBubbleTimer <= 0) {
           this.courtAmbientBubbleTimer = 7.5 + Math.random() * 4;
-          const courtLines: {
-            speaker: string;
-            role: 'judge' | 'lawyer' | 'clerk' | 'citizen';
-            seed: number;
-            display: string;
-            tts: string;
-          }[] = [
-            {
-              speaker: 'Vakil Deshpande',
-              role: 'citizen',
-              seed: 851,
-              display: 'Tarikh par tarikh! Chaliye Court Room Number 2 mein file pesh karte hain.',
-              tts: 'तारीख पर तारीख! चलिए कोर्ट रूम नंबर दो में फाइल पेश करते हैं।',
-            },
-            {
-              speaker: 'Court Clerk',
-              role: 'clerk',
-              seed: 853,
-              display: 'Agle mukadme ki file number char sau do taiyaar hai sahab!',
-              tts: 'अगले मुकदमे की फाइल नंबर चार सौ दो तैयार है साहब!',
-            },
-            {
-              speaker: 'Judge (Hall 2)',
-              role: 'judge',
-              seed: 854,
-              display: 'Order order! Gawah ke bayan register mein darj kiye jaayein!',
-              tts: 'ऑर्डर ऑर्डर! गवाह के बयान रजिस्टर में दर्ज किए जाएँ!',
-            },
-            {
-              speaker: 'Adv. Priya Nair',
-              role: 'lawyer',
-              seed: 852,
-              display: 'Your Honour, zameeni vivad ke sabhi kagazaat court mein jama kar diye hain.',
-              tts: 'योर ऑनर, ज़मीनी विवाद के सभी कागज़ात कोर्ट में जमा कर दिए हैं।',
-            },
-          ];
-          const pick = courtLines[Math.floor(Math.random() * courtLines.length)];
-          this.speakWithSubtitle(pick.speaker, pick.role, pick.seed, pick.display, pick.tts, 'low');
+          const pick = pickAmbientActorLine('court_ambient');
+          this.speakWithSubtitle(pick.speaker, pick.role, pick.seed, pick.text, pick.tts, 'low');
         }
       }
     }
@@ -10310,20 +10434,14 @@ export class GameEngine {
           npc.greetCooldown = 16 + Math.random() * 10;
           this.globalGreetCooldown = 3.5;
           if (npc.landmarkKind === 'ram_mandir') {
-            const pair = npc.isPandit
-              ? { display: 'Jai Shree Ram! Mandir mein darshan kijiye bhai.', tts: 'जय श्री राम! मंदिर में दर्शन कीजिए भाई।' }
-              : { display: 'Jai Shree Ram!', tts: 'जय श्री राम!' };
-            this.speakWithSubtitle(npc.name, 'citizen', npc.id, pair.display, pair.tts, 'low');
+            const pair = pickHindiLine('sacred_ram_mandir');
+            this.speakWithSubtitle(npc.name, 'citizen', npc.id, pair.text, pair.tts, 'low');
           } else if (npc.landmarkKind === 'krishna_mandir') {
-            const pair = npc.isPandit
-              ? { display: 'Radhe Radhe! Jai Shree Krishna! Aao aarti mein shaamil ho.', tts: 'राधे राधे! जय श्री कृष्ण! आओ आरती में शामिल हो।' }
-              : { display: 'Radhe Radhe! Jai Shree Krishna!', tts: 'राधे राधे! जय श्री कृष्ण!' };
-            this.speakWithSubtitle(npc.name, 'citizen', npc.id, pair.display, pair.tts, 'low');
+            const pair = pickHindiLine('sacred_krishna_mandir');
+            this.speakWithSubtitle(npc.name, 'citizen', npc.id, pair.text, pair.tts, 'low');
           } else {
-            const pair = npc.isImam
-              ? { display: 'Aslam walykum bhai! Sab khairiyat hai?', tts: 'अस्सलाम वालेकुम भाई! सब ख़ैरियत है?' }
-              : { display: 'Aslam walykum bhai!', tts: 'अस्सलाम वालेकुम भाई!' };
-            this.speakWithSubtitle(npc.name, 'citizen', npc.id, pair.display, pair.tts, 'low');
+            const pair = pickHindiLine('sacred_mosque');
+            this.speakWithSubtitle(npc.name, 'citizen', npc.id, pair.text, pair.tts, 'low');
           }
         }
         const hx = npc.homeX ?? npc.x;
@@ -10358,20 +10476,13 @@ export class GameEngine {
         ) {
           npc.greetCooldown = 16 + Math.random() * 10;
           this.globalGreetCooldown = 3.2;
-          const greetings = [
-            { display: 'Kaisa hai?', tts: 'कैसे हो?' },
-            { display: 'Kaisa hai bhai?', tts: 'कैसे हो भाई?' },
-            { display: 'Sab thik-thak hai na?', tts: 'सब ठीक-ठाक है ना?' },
-            { display: 'Chal chai piyega?', tts: 'चल चाय पियेगा?' },
-            { display: 'Chal chai piyega?', tts: 'चल चाय पियेगा?' },
-          ];
-          const chosen = greetings[Math.floor(Math.random() * greetings.length)];
-          this.speakWithSubtitle(npc.name, 'citizen', npc.id, chosen.display, chosen.tts, 'low');
-          if (chosen.display === 'Chal chai piyega?') {
+          const chosen = pickHindiLine('street_greet');
+          this.speakWithSubtitle(npc.name, 'citizen', npc.id, chosen.text, chosen.tts, 'low');
+          if (chosen.text === 'Chal chai piyega?') {
             this.activeChaiPrompt = {
               npcId: npc.id,
               npcName: npc.name,
-              line: chosen.display,
+              line: chosen.text,
               micListening: false,
               micStatus: null,
               ttl: 14,
@@ -10856,52 +10967,76 @@ export class GameEngine {
     const nearThanaDesk = !this.currentVehicle && distToThanaDesk < 4.5;
 
     const worldLabels: WorldLabelHud[] = [];
+    const interactableCandidates: { label: WorldLabelHud; dist: number }[] = [];
+
+    const pushInteractableIfVisible = (
+      wx: number,
+      wy: number,
+      wz: number,
+      label: Omit<WorldLabelHud, 'screenX' | 'screenY'>,
+    ) => {
+      const dist = Math.hypot(wx - this.playerX, wz - this.playerZ);
+      if (dist > 11) return;
+      this._proj.set(wx, wy, wz).project(this.camera);
+      // Center 60% view cone in NDC (-0.6..+0.6 X and Y) and strictly in front of camera
+      if (
+        this._proj.z <= 0 ||
+        this._proj.z >= 1 ||
+        Math.abs(this._proj.x) > 0.6 ||
+        Math.abs(this._proj.y) > 0.6
+      ) {
+        return;
+      }
+      interactableCandidates.push({
+        dist,
+        label: {
+          ...label,
+          screenX: (this._proj.x * 0.5 + 0.5) * w,
+          screenY: (-this._proj.y * 0.5 + 0.5) * h,
+        },
+      });
+    };
 
     if (distToShopCenter < 24) {
       for (const disp of this.shopDisplays) {
-        this._proj.copy(disp.worldPos).project(this.camera);
-        if (this._proj.z < 1) {
-          const spec = WEAPONS[disp.weaponId];
-          const owned = this.ownedWeapons.has(disp.weaponId);
-          worldLabels.push({
-            id: `disp-${disp.weaponId}`,
-            title: spec.shortName,
-            subtitle: owned
-              ? `Owned · Ammo ${formatRs(spec.ammoPrice)}`
-              : `${formatRs(spec.price)} · Click to Buy`,
-            screenX: (this._proj.x * 0.5 + 0.5) * w,
-            screenY: (-this._proj.y * 0.5 + 0.5) * h,
-            weaponId: disp.weaponId,
-          });
-        }
+        const spec = WEAPONS[disp.weaponId];
+        const owned = this.ownedWeapons.has(disp.weaponId);
+        pushInteractableIfVisible(disp.worldPos.x, disp.worldPos.y, disp.worldPos.z, {
+          id: `disp-${disp.weaponId}`,
+          title: spec.shortName,
+          subtitle: owned
+            ? `Owned · Ammo ${formatRs(spec.ammoPrice)}`
+            : `${formatRs(spec.price)} · Click to Buy`,
+          weaponId: disp.weaponId,
+        });
       }
       if (this.shopDealer) {
-        this._proj.copy(this.shopDealer.worldPos).project(this.camera);
-        if (this._proj.z < 1) {
-          worldLabels.push({
+        pushInteractableIfVisible(
+          this.shopDealer.worldPos.x,
+          this.shopDealer.worldPos.y,
+          this.shopDealer.worldPos.z,
+          {
             id: 'shop-dealer',
-            title: 'Pankaj Bhai (Ammunation)',
-            subtitle: 'Right-Click / Click to Browse',
-            screenX: (this._proj.x * 0.5 + 0.5) * w,
-            screenY: (-this._proj.y * 0.5 + 0.5) * h,
+            title: 'Pankaj Bhai (Shastra Bhandar)',
+            subtitle: 'Press E / Click to Browse',
             isDealer: true,
-          });
-        }
+          },
+        );
       }
     }
 
     if (distToBank < 26 && this.bankClerk) {
-      this._proj.copy(this.bankClerk.worldPos).project(this.camera);
-      if (this._proj.z < 1) {
-        worldLabels.push({
+      pushInteractableIfVisible(
+        this.bankClerk.worldPos.x,
+        this.bankClerk.worldPos.y,
+        this.bankClerk.worldPos.z,
+        {
           id: 'bank-clerk',
           title: 'Royal Bank Of India',
-          subtitle: 'Press E / Click Officer for Police Mission',
-          screenX: (this._proj.x * 0.5 + 0.5) * w,
-          screenY: (-this._proj.y * 0.5 + 0.5) * h,
+          subtitle: 'Press E / Click Officer for Bank & Mission',
           isBanker: true,
-        });
-      }
+        },
+      );
     }
 
     if (this.mode === 'JAIL' && this.jailRig && this.jailState) {
@@ -10945,7 +11080,7 @@ export class GameEngine {
           id: 'jail-escape',
           station: 'ESCAPE_GATE',
           pos: this.jailRig.escapePos,
-          title: '4. Weak East Gate / Grate',
+          title: '4. Weak East Gate',
           subtitle: 'Free Yard Escape Window [E]',
         },
       ];
@@ -10959,51 +11094,46 @@ export class GameEngine {
         });
       }
       for (const st of stationTags) {
-        this._proj.set(st.pos.x, 3.3, st.pos.z).project(this.camera);
-        if (this._proj.z < 1) {
-          worldLabels.push({
-            id: st.id,
-            title: st.title,
-            subtitle: st.subtitle,
-            screenX: (this._proj.x * 0.5 + 0.5) * w,
-            screenY: (-this._proj.y * 0.5 + 0.5) * h,
-            jailStation: st.station,
-          });
-        }
+        pushInteractableIfVisible(st.pos.x, 3.05, st.pos.z, {
+          id: st.id,
+          title: st.title,
+          subtitle: st.subtitle,
+          jailStation: st.station,
+        });
       }
       for (const rival of this.jailRig.inmates) {
         if (!rival.isRival) continue;
-        this._proj.set(rival.x, 2.55, rival.z).project(this.camera);
-        if (this._proj.z > 0 && this._proj.z < 1) {
-          worldLabels.push({
-            id: `jail-rival-${rival.id}`,
-            title: rival.defeated
-              ? `${rival.name} · KO`
-              : rival.bribed
-                ? `${rival.name} · Truce`
-                : `${rival.name} (${rival.hp}/${rival.maxHp} HP)`,
-            subtitle: rival.defeated
-              ? 'Knocked Out'
-              : rival.bribed
-                ? 'Haftaa Paid · Safe'
-                : `Fight [Click/J] · Bribe ${formatRs(rival.bribeCost)} [6/B]`,
-            screenX: (this._proj.x * 0.5 + 0.5) * w,
-            screenY: (-this._proj.y * 0.5 + 0.5) * h,
-            jailStation: 'INMATE_RIVAL',
-            rivalId: rival.id,
-          });
-        }
+        pushInteractableIfVisible(rival.x, 2.55, rival.z, {
+          id: `jail-rival-${rival.id}`,
+          title: rival.defeated
+            ? `${rival.name} · KO`
+            : rival.bribed
+              ? `${rival.name} · Truce`
+              : `${rival.name} (${rival.hp}/${rival.maxHp} HP)`,
+          subtitle: rival.defeated
+            ? 'Knocked Out'
+            : rival.bribed
+              ? 'Haftaa Paid · Safe'
+              : `Fight [Click/J] · Bribe ${formatRs(rival.bribeCost)} [6/B]`,
+          jailStation: 'INMATE_RIVAL',
+          rivalId: rival.id,
+        });
       }
     }
 
-    // Crisp HUD Building Sign Projections (all visible landmarks within 65m in front of camera)
+    // Crisp HUD Building Sign Projections (landmarks inside center 60% viewport so HUD corners never overlap)
     if (this.mode === 'PLAYING' && this.houseName !== null) {
       const visibleSigns: { sign: BuildingSignInfo; dist: number; sx: number; sy: number }[] = [];
       for (const sign of this.buildingSigns) {
         const dist = Math.hypot(sign.x - this.playerX, sign.z - this.playerZ);
         if (dist > (sign.maxDist ?? 65)) continue;
         this._proj.set(sign.x, sign.y, sign.z).project(this.camera);
-        if (this._proj.z > 0 && this._proj.z < 1 && Math.abs(this._proj.x) <= 0.88 && Math.abs(this._proj.y) <= 0.85) {
+        if (
+          this._proj.z > 0 &&
+          this._proj.z < 1 &&
+          Math.abs(this._proj.x) <= 0.6 &&
+          Math.abs(this._proj.y) <= 0.56
+        ) {
           visibleSigns.push({
             sign,
             dist,
@@ -11013,7 +11143,7 @@ export class GameEngine {
         }
       }
       visibleSigns.sort((a, b) => a.dist - b.dist);
-      for (const item of visibleSigns.slice(0, 6)) {
+      for (const item of visibleSigns.slice(0, 4)) {
         worldLabels.push({
           id: item.sign.id,
           title: item.sign.title,
@@ -11063,37 +11193,53 @@ export class GameEngine {
         for (const hs of homeStations) {
           const d = Math.hypot(this.playerX - hs.pos.x, this.playerZ - hs.pos.z);
           if (d < 3.4) nearHomeStation = hs.kind;
-          this._proj.set(hs.pos.x, 2.35, hs.pos.z).project(this.camera);
-          if (this._proj.z > 0 && this._proj.z < 1) {
-            worldLabels.push({
-              id: hs.id,
-              title: hs.title,
-              subtitle: hs.subtitle,
-              screenX: (this._proj.x * 0.5 + 0.5) * w,
-              screenY: (-this._proj.y * 0.5 + 0.5) * h,
-              homeStation: hs.kind,
-            });
-          }
+          pushInteractableIfVisible(hs.pos.x, 2.35, hs.pos.z, {
+            id: hs.id,
+            title: hs.title,
+            subtitle: hs.subtitle,
+            homeStation: hs.kind,
+          });
         }
       }
     }
 
     if (distToLicense < 26 && this.licenseOfficer) {
-      this._proj.copy(this.licenseOfficer.worldPos).project(this.camera);
-      if (this._proj.z < 1) {
-        worldLabels.push({
+      pushInteractableIfVisible(
+        this.licenseOfficer.worldPos.x,
+        this.licenseOfficer.worldPos.y,
+        this.licenseOfficer.worldPos.z,
+        {
           id: 'license-officer',
           title: 'DM Arms & Driving Office',
           subtitle:
             this.hasGunLicense && this.hasDrivingLicense
               ? 'Arms + Driving Licenses Approved'
               : `Press E / Click for Arms, DL & Helmet`,
-          screenX: (this._proj.x * 0.5 + 0.5) * w,
-          screenY: (-this._proj.y * 0.5 + 0.5) * h,
           isLicenseOfficer: true,
-        });
-      }
+        },
+      );
     }
+
+    // Sort interactables nearest-first, keep detailed [E] prompt ONLY for single closest target,
+    // and prevent overlapping label stacks on screen
+    interactableCandidates.sort((a, b) => a.dist - b.dist);
+    const placedInteractables: WorldLabelHud[] = [];
+    for (let i = 0; i < interactableCandidates.length; i++) {
+      const candidate = interactableCandidates[i].label;
+      const isClosest = i === 0;
+      const overlapsPlaced = placedInteractables.some(
+        (p) =>
+          Math.abs(p.screenX - candidate.screenX) < 110 &&
+          Math.abs(p.screenY - candidate.screenY) < 34,
+      );
+      if (overlapsPlaced) continue;
+      placedInteractables.push({
+        ...candidate,
+        isClosest,
+        subtitle: isClosest ? candidate.subtitle : '',
+      });
+    }
+    worldLabels.push(...placedInteractables);
 
     let nearPrompt: string | null = null;
     if (this.missionPhase === 'CUTSCENE') {
@@ -11137,7 +11283,7 @@ export class GameEngine {
     } else if (nearBank) {
       nearPrompt = 'Royal Bank Of India · Press E or Click Bank Officer for Savings, FD & Mission';
     } else if (nearGunShop) {
-      nearPrompt = 'Pankaj Ammunation · Click Display Gun, Right-Click Dealer, or press B';
+      nearPrompt = 'Pankaj Shastra Bhandar · Click Display Gun, Right-Click Dealer, or press B';
     } else {
       const nearCar = this.vehicles.find(
         (v) => !v.destroyed && Math.hypot(v.x - this.playerX, v.z - this.playerZ) < 4.2,

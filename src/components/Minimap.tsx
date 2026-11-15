@@ -388,16 +388,16 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
       type="button"
       onClick={onExpand}
       title="Open Full City Map (M)"
-      className="relative w-44 h-44 bg-[#0B0E14] border border-slate-700/80 hover:border-amber-400/80 shadow-xl overflow-hidden pointer-events-auto cursor-pointer text-left block transition-colors"
+      className="relative w-[clamp(96px,22vw,168px)] h-[clamp(96px,22vw,168px)] rounded-xl bg-[rgba(14,17,24,0.65)] border border-white/[0.16] hover:border-amber-400/70 shadow-xl overflow-hidden pointer-events-auto cursor-pointer text-left block transition-colors"
     >
-      <canvas ref={canvasRef} width={176} height={176} className="block w-full h-full" />
-      <div className="absolute top-1 left-1/2 -translate-x-1/2 px-1.5 bg-[#0B0E14]/90 border border-slate-700/70 text-[10px] font-display font-bold tracking-wider text-amber-400">
+      <canvas ref={canvasRef} width={176} height={176} className="block w-full h-full opacity-95" />
+      <div className="absolute top-1 left-1/2 -translate-x-1/2 px-1.5 rounded bg-black/50 text-[clamp(8px,1.6vw,10px)] font-display font-bold tracking-wider text-[#FBBF24] hud-text-shadow">
         N
       </div>
-      <div className="absolute top-1 right-1 px-1.5 bg-[#0B0E14]/90 border border-slate-700/70 text-[9px] font-mono-num font-bold text-sky-300">
-        MAP (M)
+      <div className="absolute top-1 right-1 px-1.5 rounded bg-black/50 text-[clamp(7px,1.5vw,9px)] font-mono-num font-bold text-[#38BDF8] hud-text-shadow">
+        MAP
       </div>
-      <div className="absolute bottom-1 left-1.5 right-1.5 flex items-center justify-between text-[9px] font-mono-num text-slate-400 pointer-events-none">
+      <div className="hidden sm:flex absolute bottom-1 left-2 right-2 items-center justify-between text-[9px] font-mono-num text-slate-300/85 pointer-events-none hud-text-shadow">
         <span>H:Home</span>
         <span>G:Gun</span>
         <span>B:Bank</span>

@@ -32,7 +32,7 @@ export const ShopConfirmModal: React.FC<ShopConfirmModalProps> = ({
         <div className="flex items-start justify-between gap-3">
           <div>
             <span className="text-[11px] font-mono-num text-amber-400 uppercase tracking-wider">
-              Pankaj Ammunation Display Claim
+              Pankaj Shastra Bhandar Display Claim
             </span>
             <h3 className="font-display text-xl font-bold text-slate-100 mt-0.5">
               {spec.name}

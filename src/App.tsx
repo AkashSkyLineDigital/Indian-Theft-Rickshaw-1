@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { RotateCw, X } from 'lucide-react';
 import { AtmModal } from './components/AtmModal';
 import { BankModal } from './components/BankModal';
 import { BustedOverlay } from './components/BustedOverlay';
@@ -171,10 +172,12 @@ export default function App() {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<GameEngine | null>(null);
   const toastIdRef = useRef(1);
+  const settingsOriginRef = useRef<'TITLE' | 'PLAYING' | 'JAIL'>('TITLE');
 
   const [mode, setMode] = useState<GameMode>('TITLE');
   const [shopOpen, setShopOpen] = useState(false);
   const [phoneOpen, setPhoneOpen] = useState(false);
+  const [phoneMinimized, setPhoneMinimized] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
   const [wheelOpen, setWheelOpen] = useState(false);
   const [confirmGunId, setConfirmGunId] = useState<WeaponId | null>(null);
@@ -190,11 +193,23 @@ export default function App() {
   const [hud, setHud] = useState<HudSnapshot>(INITIAL_HUD);
   const [toasts, setToasts] = useState<FloatingToast[]>([]);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
+  const [isNarrowPortrait, setIsNarrowPortrait] = useState(false);
+  const [rotateHintDismissed, setRotateHintDismissed] = useState(false);
   const [engineError, setEngineError] = useState<string | null>(null);
 
   useEffect(() => {
-    const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-    setIsTouchDevice(hasTouch);
+    const updateViewportFlags = () => {
+      const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+      setIsTouchDevice(hasTouch);
+      setIsNarrowPortrait(window.innerHeight > window.innerWidth && window.innerWidth < 540);
+    };
+    updateViewportFlags();
+    window.addEventListener('resize', updateViewportFlags);
+    window.addEventListener('orientationchange', updateViewportFlags);
+    return () => {
+      window.removeEventListener('resize', updateViewportFlags);
+      window.removeEventListener('orientationchange', updateViewportFlags);
+    };
   }, []);
 
   const pushToast = useCallback((toast: Omit<FloatingToast, 'id'>) => {
@@ -221,12 +236,16 @@ export default function App() {
     setMapOpen((prev) => {
       const next = !prev;
       if (next) {
-        setPhoneOpen(false);
+        if (phoneOpen && !phoneMinimized) {
+          setPhoneMinimized(true);
+        }
         engineRef.current?.releasePointerLock();
+      } else {
+        engineRef.current?.requestPointerLock();
       }
       return next;
     });
-  }, []);
+  }, [phoneOpen, phoneMinimized]);
 
   useEffect(() => {
     const el = mountRef.current;
@@ -250,6 +269,7 @@ export default function App() {
           if (nextMode !== 'PLAYING') {
             setWheelOpen(false);
             setPhoneOpen(false);
+            setPhoneMinimized(false);
             setMapOpen(false);
           }
         },
@@ -367,10 +387,17 @@ export default function App() {
       if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
         return;
       }
-      if (e.code === 'Escape' && mode === 'PLAYING' && (mapOpen || phoneOpen)) {
+      if (e.code === 'Escape' && mode === 'PAUSED' && settingsOriginRef.current === 'TITLE') {
+        e.stopImmediatePropagation();
+        engineRef.current?.setMode('TITLE');
+        return;
+      }
+      if (e.code === 'Escape' && mode === 'PLAYING' && (mapOpen || (phoneOpen && !phoneMinimized))) {
         e.stopImmediatePropagation();
         setMapOpen(false);
         setPhoneOpen(false);
+        setPhoneMinimized(false);
+        engineRef.current?.requestPointerLock();
         return;
       }
       if (e.code === 'KeyB') {
@@ -386,22 +413,26 @@ export default function App() {
         }
       } else if (e.code === 'KeyP') {
         if (mode === 'PLAYING') {
-          setPhoneOpen((prev) => {
-            const next = !prev;
-            if (next) {
-              setMapOpen(false);
-              engineRef.current?.releasePointerLock();
-            }
-            return next;
-          });
+          if (!phoneOpen || phoneMinimized) {
+            setMapOpen(false);
+            setPhoneOpen(true);
+            setPhoneMinimized(false);
+            engineRef.current?.releasePointerLock();
+          } else {
+            setPhoneOpen(false);
+            setPhoneMinimized(false);
+            engineRef.current?.requestPointerLock();
+          }
         }
       }
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [mode, shopOpen, confirmGunId, mapOpen, phoneOpen, handleOpenShop]);
+  }, [mode, shopOpen, confirmGunId, mapOpen, phoneOpen, phoneMinimized, handleOpenShop]);
 
   const handleOpenSettings = () => {
+    settingsOriginRef.current =
+      mode === 'TITLE' ? 'TITLE' : mode === 'JAIL' || hud.jail?.active ? 'JAIL' : 'PLAYING';
     setShopOpen(false);
     setConfirmGunId(null);
     setActiveStall(null);
@@ -410,11 +441,16 @@ export default function App() {
     setWardrobeOpen(false);
     setBankModal({ open: false, fromDebtBailout: false });
     setPhoneOpen(false);
+    setPhoneMinimized(false);
     setMapOpen(false);
     engineRef.current?.setMode('PAUSED');
   };
 
   const handleResumeFromSettings = () => {
+    if (settingsOriginRef.current === 'TITLE') {
+      engineRef.current?.setMode('TITLE');
+      return;
+    }
     engineRef.current?.setMode(hud.jail?.active ? 'JAIL' : 'PLAYING');
   };
 
@@ -476,7 +512,7 @@ export default function App() {
     (mode === 'PLAYING' || mode === 'JAIL') &&
     hud.mission.phase !== 'CUTSCENE' &&
     !wheelOpen &&
-    !phoneOpen &&
+    (!phoneOpen || phoneMinimized) &&
     !mapOpen &&
     (settings.touchControls === 'on' || (settings.touchControls === 'auto' && isTouchDevice));
 
@@ -525,7 +561,10 @@ export default function App() {
 
       {!engineError && mode === 'TITLE' && (
         <TitleScreen
-          onStart={() => engineRef.current?.startGame()}
+          onStart={() => {
+            settingsOriginRef.current = 'PLAYING';
+            engineRef.current?.startGame();
+          }}
           onOpenSettings={handleOpenSettings}
         />
       )}
@@ -539,11 +578,15 @@ export default function App() {
           onOpenShop={handleOpenShop}
           onOpenPhone={() => {
             setMapOpen(false);
-            setPhoneOpen((p) => {
-              const next = !p;
-              if (next) engineRef.current?.releasePointerLock();
-              return next;
-            });
+            if (!phoneOpen || phoneMinimized) {
+              setPhoneOpen(true);
+              setPhoneMinimized(false);
+              engineRef.current?.releasePointerLock();
+            } else {
+              setPhoneOpen(false);
+              setPhoneMinimized(false);
+              engineRef.current?.requestPointerLock();
+            }
           }}
           onOpenWheel={() => engineRef.current?.setWeaponWheelOpen(!wheelOpen)}
           onOpenMap={handleToggleMap}
@@ -596,6 +639,9 @@ export default function App() {
           hasHelmet={mode === 'PLAYING' && hud.hasHelmet}
           helmetOn={mode === 'PLAYING' && hud.helmetOn}
           isBike={mode === 'PLAYING' && hud.currentVehicleKind === 'bike'}
+          buttonScale={settings.touchButtonScale ?? 1}
+          opacity={settings.touchOpacity ?? 0.9}
+          movementStyle={settings.touchMovementStyle ?? 'joystick'}
           contextLabel={
             mode === 'JAIL'
               ? hud.jail?.nearStation === 'BUNK'
@@ -656,13 +702,34 @@ export default function App() {
             engineRef.current?.releasePointerLock();
             setMapOpen(false);
             setPhoneOpen(true);
+            setPhoneMinimized(false);
           }}
           onOpenSettings={handleOpenSettings}
+          onRadio={() => engineRef.current?.triggerRadioChatter()}
+          onHorn={() => engineRef.current?.triggerVehicleHorn()}
           canSurrender={mode === 'PLAYING' && hud.wantedLevel >= 1}
           canStreetBribe={mode === 'PLAYING' && Boolean(hud.streetBribe?.available)}
           onSurrender={() => engineRef.current?.triggerManualSurrender()}
           onOfferStreetBribe={() => engineRef.current?.offerStreetBribe()}
         />
+      )}
+
+      {/* Clean, dismissible portrait mobile orientation hint */}
+      {!engineError && isTouchDevice && isNarrowPortrait && !rotateHintDismissed && (
+        <div className="fixed top-2 left-1/2 -translate-x-1/2 z-40 px-3 py-1.5 bg-[#0B0E14]/95 border border-amber-500/80 shadow-xl flex items-center gap-2 max-w-[92vw]">
+          <RotateCw className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          <span className="text-[11px] font-mono-num text-amber-100 whitespace-nowrap">
+            Rotate to Landscape for Best View
+          </span>
+          <button
+            type="button"
+            onClick={() => setRotateHintDismissed(true)}
+            aria-label="Dismiss rotate hint"
+            className="p-0.5 text-slate-400 hover:text-white cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
       )}
 
       {!engineError && mode === 'PLAYING' && wheelOpen && (
@@ -671,7 +738,10 @@ export default function App() {
           ownedWeapons={hud.ownedWeapons}
           ammo={hud.ammo}
           onSelect={(id) => engineRef.current?.equipWeapon(id)}
-          onClose={() => engineRef.current?.setWeaponWheelOpen(false)}
+          onClose={() => {
+            engineRef.current?.setWeaponWheelOpen(false);
+            engineRef.current?.requestPointerLock();
+          }}
         />
       )}
 
@@ -680,7 +750,10 @@ export default function App() {
           hud={hud}
           onSetWaypoint={(x, z, label) => engineRef.current?.setWaypoint(x, z, label)}
           onClearWaypoint={() => engineRef.current?.clearWaypoint()}
-          onClose={() => setMapOpen(false)}
+          onClose={() => {
+            setMapOpen(false);
+            engineRef.current?.requestPointerLock();
+          }}
         />
       )}
 
@@ -691,6 +764,12 @@ export default function App() {
           hp={hud.hp}
           maxHp={hud.maxHp}
           medkits={hud.medkits}
+          kills={hud.kills}
+          probationDaysLeft={hud.probationDaysLeft}
+          houseName={hud.houseName}
+          homePos={hud.homePos}
+          timeOfDay={hud.timeOfDay}
+          bank={hud.bank}
           inVehicle={hud.inVehicle}
           firstPerson={hud.firstPerson}
           adsActive={hud.adsActive}
@@ -703,14 +782,32 @@ export default function App() {
           helmetOn={hud.helmetOn}
           policeInspection={hud.policeInspection}
           settings={settings}
+          minimized={phoneMinimized}
+          onMinimize={() => {
+            setPhoneMinimized(true);
+            engineRef.current?.requestPointerLock();
+          }}
+          onRestore={() => {
+            setPhoneMinimized(false);
+            engineRef.current?.releasePointerLock();
+          }}
           onUpdateSettings={handleUpdateSettings}
           onOpenFullSettings={handleOpenSettings}
           onOpenArmory={handleOpenShop}
           onOpenMap={() => {
-            setPhoneOpen(false);
+            setPhoneMinimized(true);
             setMapOpen(true);
           }}
+          onSetWaypoint={(x, z, label) => engineRef.current?.setWaypoint(x, z, label)}
           onClearWaypoint={() => engineRef.current?.clearWaypoint()}
+          onBankTransaction={(acc, act, amt) =>
+            engineRef.current?.bankTransaction(acc, act, amt, true) ?? {
+              ok: false,
+              message: 'Royal Bank mobile link offline',
+            }
+          }
+          onCaptureSnapshot={() => engineRef.current?.captureSnapshotDataUrl() ?? null}
+          onRadio={() => engineRef.current?.triggerRadioChatter()}
           onToggleMic={() => engineRef.current?.toggleOrStartMic()}
           onToggleFirstPerson={() => engineRef.current?.toggleFirstPerson()}
           onToggleAds={() => engineRef.current?.toggleAds()}
@@ -719,31 +816,39 @@ export default function App() {
           onRespondLicenseCheck={(show) => engineRef.current?.respondToLicenseCheck(show)}
           onInteract={() => {
             setPhoneOpen(false);
+            setPhoneMinimized(false);
             engineRef.current?.triggerContextAction();
           }}
           onUseMedkit={() => engineRef.current?.useMedkit()}
           onOpenWheel={() => {
-            setPhoneOpen(false);
+            setPhoneMinimized(true);
             engineRef.current?.setWeaponWheelOpen(true);
           }}
           onEnterExitVehicle={() => {
             setPhoneOpen(false);
+            setPhoneMinimized(false);
             engineRef.current?.triggerEnterExit();
           }}
           onBribePolice={() => engineRef.current?.bribePolice()}
           streetBribe={hud.streetBribe}
           onOfferStreetBribe={() => {
             setPhoneOpen(false);
+            setPhoneMinimized(false);
             engineRef.current?.offerStreetBribe();
           }}
           onSurrender={() => {
             setPhoneOpen(false);
+            setPhoneMinimized(false);
             engineRef.current?.triggerManualSurrender();
           }}
           onApplyCheat={(code) =>
             engineRef.current?.applyCheat(code) ?? { ok: false, message: 'Engine not ready' }
           }
-          onClose={() => setPhoneOpen(false)}
+          onClose={() => {
+            setPhoneOpen(false);
+            setPhoneMinimized(false);
+            engineRef.current?.requestPointerLock();
+          }}
         />
       )}
 
@@ -758,6 +863,7 @@ export default function App() {
         !wardrobeOpen && (
           <SettingsModal
             settings={settings}
+            openedFromTitle={settingsOriginRef.current === 'TITLE'}
             onUpdateSettings={handleUpdateSettings}
             onResume={handleResumeFromSettings}
             onResetCity={() => engineRef.current?.resetCity()}
@@ -949,7 +1055,10 @@ export default function App() {
 
       {!engineError && mode === 'PLAYING' && hud.needsHouseNaming && (
         <HouseNamingModal
-          onConfirmName={(houseName) => engineRef.current?.setHouseName(houseName)}
+          onConfirmName={(houseName) => {
+            engineRef.current?.setHouseName(houseName);
+            engineRef.current?.requestPointerLock();
+          }}
         />
       )}
 
@@ -958,8 +1067,14 @@ export default function App() {
           prompt={hud.licenseRevokedPrompt}
           cash={hud.cash}
           bankSavings={hud.bank.savingsTotal}
-          onRenewAtThana={(source) => engineRef.current?.renewLicenseAtThana(source)}
-          onVisitDmLater={() => engineRef.current?.dismissLicenseRevokedToDm()}
+          onRenewAtThana={(source) => {
+            engineRef.current?.renewLicenseAtThana(source);
+            engineRef.current?.requestPointerLock();
+          }}
+          onVisitDmLater={() => {
+            engineRef.current?.dismissLicenseRevokedToDm();
+            engineRef.current?.requestPointerLock();
+          }}
         />
       )}
 
@@ -973,6 +1088,7 @@ export default function App() {
           toasts={toasts}
           worldLabels={hud.worldLabels}
           isTouchHud={showTouchHud}
+          pointerLocked={hud.pointerLocked}
           onSleepNight={() => engineRef.current?.jailSleepNight()}
           onUseToilet={() => engineRef.current?.jailUseToilet()}
           onSkipSentence={() => engineRef.current?.jailSkipSentence()}
