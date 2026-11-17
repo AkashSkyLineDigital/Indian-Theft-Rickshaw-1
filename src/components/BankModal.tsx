@@ -20,6 +20,7 @@ import {
   MISSION_REWARD_INR,
   SAVINGS_ANNUAL_RATE,
   TimeOfDayHud,
+  formatInGameDate,
   formatRs,
   formatRsExact,
 } from '../types/game';
@@ -165,7 +166,7 @@ export const BankModal: React.FC<BankModalProps> = ({
             <span className="flex items-center gap-1 text-sky-300">
               <CalendarDays className="w-3.5 h-3.5" />
               <span>
-                {bank.calendarDate} (Day {timeOfDay.dayCount}) · {timeOfDay.formattedTime}
+                {bank.calendarDate} · {timeOfDay.formattedTime}
               </span>
             </span>
             <span className="flex items-center gap-1 text-emerald-300 font-bold">
@@ -344,7 +345,9 @@ export const BankModal: React.FC<BankModalProps> = ({
                     </div>
                     <div className="col-span-2 pt-1 border-t border-slate-800/80 flex justify-between">
                       <span className="text-slate-400">
-                        {bank.fdOpenedDay ? `Opened Day ${bank.fdOpenedDay} · Yield:` : 'Est. Yield / Day:'}
+                        {bank.fdOpenedDay
+                          ? `Opened ${formatInGameDate(bank.fdOpenedDay)} · Yield:`
+                          : 'Est. Yield / Day:'}
                       </span>
                       <span className="text-amber-300 font-semibold">
                         +{formatRsExact(bank.fdDailyRate)}/day
@@ -441,7 +444,7 @@ export const BankModal: React.FC<BankModalProps> = ({
                 <table className="w-full text-left border-collapse text-[11px] font-mono-num">
                   <thead className="bg-[#070A10] text-slate-400 uppercase sticky top-0 border-b border-slate-800">
                     <tr>
-                      <th className="py-2 px-3">Day / Time</th>
+                      <th className="py-2 px-3">Date / Time</th>
                       <th className="py-2 px-3">Acct</th>
                       <th className="py-2 px-3">Particulars</th>
                       <th className="py-2 px-3 text-right">Amount</th>
@@ -461,7 +464,7 @@ export const BankModal: React.FC<BankModalProps> = ({
                       bank.passbook.map((row) => (
                         <tr key={row.id} className="hover:bg-slate-900/50">
                           <td className="py-2 px-3 text-slate-300 whitespace-nowrap">
-                            Day {row.day} · {row.timeLabel}
+                            {formatInGameDate(row.day)} · {row.timeLabel}
                           </td>
                           <td className="py-2 px-3 whitespace-nowrap">
                             <span

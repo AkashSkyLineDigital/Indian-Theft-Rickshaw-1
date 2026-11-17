@@ -674,7 +674,13 @@ export class GameEngine {
   // Input state
   private keys = new Set<string>();
   private mouseDownLeft = false;
+  private mouseDownRight = false;
   private mouseDragging = false;
+  private pendingUnlockedLeftAttack = false;
+  private unlockedLeftDownTime = 0;
+  private mouseDownStartX = 0;
+  private mouseDownStartY = 0;
+  private mouseDragDist = 0;
   private lastMouseX = 0;
   private lastMouseY = 0;
   private hasMousePos = false;
@@ -1933,16 +1939,22 @@ export class GameEngine {
     this.pointerLocked = document.pointerLockElement === this.renderer.domElement;
     if (this.pointerLocked) {
       this.pointerLockBlocked = false;
-    } else {
-      this.keys.clear();
       this.mouseDownLeft = false;
+      this.mouseDownRight = false;
       this.mouseDragging = false;
+      this.pendingUnlockedLeftAttack = false;
+    } else {
+      this.mouseDownLeft = false;
+      this.mouseDownRight = false;
+      this.mouseDragging = false;
+      this.pendingUnlockedLeftAttack = false;
     }
     if (this.pointerLockProbeId !== null) {
       window.clearTimeout(this.pointerLockProbeId);
       this.pointerLockProbeId = null;
     }
     this.hasMousePos = false;
+    this.syncCanvasCursor();
     this.emitHudSnapshot();
   };
 
@@ -2017,8 +2029,17 @@ export class GameEngine {
 
   private syncCanvasCursor(): void {
     const isPlayingOrJail = this.mode === 'PLAYING' || this.mode === 'JAIL';
-    this.renderer.domElement.style.cursor =
-      isPlayingOrJail && !this.firstPerson ? 'none' : '';
+    if (!isPlayingOrJail) {
+      this.renderer.domElement.style.cursor = '';
+      return;
+    }
+    if (this.mouseDragging) {
+      this.renderer.domElement.style.cursor = 'grabbing';
+    } else if (this.firstPerson || this.adsActive) {
+      this.renderer.domElement.style.cursor = 'crosshair';
+    } else {
+      this.renderer.domElement.style.cursor = '';
+    }
   }
 
   public captureSnapshotDataUrl(): string | null {
@@ -2045,7 +2066,10 @@ export class GameEngine {
     this.hasMousePos = false;
     this.keys.clear();
     this.mouseDownLeft = false;
+    this.mouseDownRight = false;
     this.mouseDragging = false;
+    this.pendingUnlockedLeftAttack = false;
+    this.syncCanvasCursor();
     if (this.weaponWheelOpen) {
       this.weaponWheelOpen = false;
       this.callbacks.onWeaponWheelChange(false);
@@ -2448,47 +2472,89 @@ export class GameEngine {
       }
       return;
     }
+    if (e.target !== this.renderer.domElement) return;
     soundEngine.unlock();
     this.lastMouseX = e.clientX;
     this.lastMouseY = e.clientY;
+    this.mouseDownStartX = e.clientX;
+    this.mouseDownStartY = e.clientY;
+    this.mouseDragDist = 0;
     this.hasMousePos = true;
 
-    // Right-click or Left-click on Gun Shopkeeper NPC, 3D Display Gun, Bank, or Street Stall
-    if (this.mode === 'PLAYING' && (e.button === 2 || e.button === 0)) {
+    const wasLocked = document.pointerLockElement === this.renderer.domElement;
+
+    // Unlocked mouse click on Gun Shopkeeper NPC, 3D Display Gun, Bank, or Street Stall
+    if (!wasLocked && this.mode === 'PLAYING' && (e.button === 2 || e.button === 0)) {
       const handledShop = this.tryRaycastShopClick(e.clientX, e.clientY, e.button === 2);
       if (handledShop) return;
     }
 
-    if (this.mode === 'PLAYING' && e.button === 2 && !this.currentVehicle && this.activeWeapon !== 'fists') {
-      this.toggleAds();
+    if (wasLocked) {
+      if (e.button === 2 && this.mode === 'PLAYING' && !this.currentVehicle && this.activeWeapon !== 'fists') {
+        this.toggleAds();
+        return;
+      }
+      if (e.button === 0) {
+        this.mouseDownLeft = true;
+        if (!this.currentVehicle) {
+          this.tryPlayerAttack();
+        }
+      }
       return;
     }
 
+    // Unlocked cursor mode: allow dragging with LMB/RMB/MMB to rotate camera cleanly without misfires
+    const isCoarseTouch = this.isCoarsePointerDevice();
     if (e.button === 0) {
-      const wasLocked = document.pointerLockElement === this.renderer.domElement;
-      const isCoarseTouch = this.isCoarsePointerDevice();
-      if (!wasLocked && !isCoarseTouch) {
-        const prevBlocked = this.pointerLockBlocked;
+      if (!this.pointerLockBlocked && !isCoarseTouch) {
         this.requestCanvasPointerLock();
-        if (!prevBlocked) {
-          // Consume this first click solely to lock desktop pointer without misfiring
-          this.mouseDragging = true;
-          return;
-        }
       }
       this.mouseDragging = true;
-      this.mouseDownLeft = true;
-      if (!this.currentVehicle) {
-        this.tryPlayerAttack();
-      }
+      this.pendingUnlockedLeftAttack = !this.currentVehicle;
+      this.unlockedLeftDownTime = performance.now();
+      this.syncCanvasCursor();
     } else if (e.button === 2) {
+      this.mouseDownRight = true;
       this.mouseDragging = true;
+      this.syncCanvasCursor();
+    } else if (e.button === 1) {
+      this.mouseDragging = true;
+      this.syncCanvasCursor();
     }
   };
 
   private handleMouseUp = (e: MouseEvent): void => {
-    if (e.button === 0) this.mouseDownLeft = false;
-    if (e.button === 0 || e.button === 2) this.mouseDragging = false;
+    const isLocked = document.pointerLockElement === this.renderer.domElement;
+    if (e.button === 0) {
+      const shouldClickFire =
+        !isLocked &&
+        this.pendingUnlockedLeftAttack &&
+        this.mouseDragDist <= 6 &&
+        !this.currentVehicle &&
+        !this.weaponWheelOpen &&
+        (this.mode === 'PLAYING' || this.mode === 'JAIL');
+      this.mouseDownLeft = false;
+      this.pendingUnlockedLeftAttack = false;
+      if (shouldClickFire) {
+        this.tryPlayerAttack();
+      }
+    } else if (e.button === 2) {
+      const shouldToggleScope =
+        !isLocked &&
+        this.mouseDownRight &&
+        this.mouseDragDist <= 6 &&
+        this.mode === 'PLAYING' &&
+        !this.currentVehicle &&
+        this.activeWeapon !== 'fists';
+      this.mouseDownRight = false;
+      if (shouldToggleScope) {
+        this.toggleAds();
+      }
+    }
+    if (e.button === 0 || e.button === 1 || e.button === 2) {
+      this.mouseDragging = this.mouseDownRight || this.mouseDownLeft || this.pendingUnlockedLeftAttack;
+      this.syncCanvasCursor();
+    }
   };
 
   private handleMouseMove = (e: MouseEvent): void => {
@@ -2505,9 +2571,22 @@ export class GameEngine {
     if (document.pointerLockElement === this.renderer.domElement) {
       dx = e.movementX || 0;
       dy = e.movementY || 0;
+      // Ignore rare browser pointer-lock acquisition jump spikes
+      if (Math.abs(dx) > 220 || Math.abs(dy) > 220) return;
     } else {
-      // Smooth click-and-drag fallback rotation when Pointer Lock is blocked by an iframe sandbox
-      if (!this.mouseDragging && (e.buttons & 1) === 0 && (e.buttons & 2) === 0) {
+      if ((e.buttons & 7) === 0) {
+        if (
+          this.mouseDragging ||
+          this.mouseDownLeft ||
+          this.mouseDownRight ||
+          this.pendingUnlockedLeftAttack
+        ) {
+          this.mouseDragging = false;
+          this.mouseDownLeft = false;
+          this.mouseDownRight = false;
+          this.pendingUnlockedLeftAttack = false;
+          this.syncCanvasCursor();
+        }
         this.lastMouseX = e.clientX;
         this.lastMouseY = e.clientY;
         this.hasMousePos = true;
@@ -2523,8 +2602,16 @@ export class GameEngine {
       dy = e.clientY - this.lastMouseY;
       this.lastMouseX = e.clientX;
       this.lastMouseY = e.clientY;
+      this.mouseDragDist = Math.max(
+        this.mouseDragDist,
+        Math.hypot(e.clientX - this.mouseDownStartX, e.clientY - this.mouseDownStartY),
+      );
+      if (this.mouseDragDist > 6) {
+        this.pendingUnlockedLeftAttack = false;
+        this.mouseDownLeft = false;
+      }
 
-      if (Math.hypot(dx, dy) > 120) return;
+      if (Math.hypot(dx, dy) > 140) return;
     }
 
     if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return;
@@ -9669,6 +9756,19 @@ export class GameEngine {
           return;
         }
       }
+    }
+
+    // Promote steady unlocked left-button hold into continuous fire if not dragging camera
+    if (
+      this.pendingUnlockedLeftAttack &&
+      this.mouseDragDist <= 6 &&
+      !this.weaponWheelOpen &&
+      !this.currentVehicle &&
+      performance.now() - this.unlockedLeftDownTime >= 95
+    ) {
+      this.pendingUnlockedLeftAttack = false;
+      this.mouseDownLeft = true;
+      this.tryPlayerAttack();
     }
 
     // Continuous fire for held touch Fire or automatic weapons

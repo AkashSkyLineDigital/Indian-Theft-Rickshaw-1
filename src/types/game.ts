@@ -118,37 +118,39 @@ export function formatRsExact(amount: number): string {
   return amount < 0 ? `-₹${fixed}` : `₹${fixed}`;
 }
 
-// Authentic Indian Saka National Calendar starting on 18 Kartik, 2026 (Day 1)
-const INDIAN_MONTHS: { name: string; days: number }[] = [
-  { name: 'Kartik', days: 30 },
-  { name: 'Margashirsha', days: 30 },
-  { name: 'Pausha', days: 30 },
-  { name: 'Magha', days: 30 },
-  { name: 'Phalguna', days: 30 },
-  { name: 'Chaitra', days: 30 },
-  { name: 'Vaishakha', days: 31 },
-  { name: 'Jyeshtha', days: 31 },
-  { name: 'Ashadha', days: 31 },
-  { name: 'Shravana', days: 31 },
-  { name: 'Bhadrapada', days: 31 },
-  { name: 'Ashwin', days: 30 },
+// Standard Gregorian Calendar starting on 1 Jan 2026 (Day 1)
+const CALENDAR_MONTHS: { name: string; days: number }[] = [
+  { name: 'Jan', days: 31 },
+  { name: 'Feb', days: 28 },
+  { name: 'Mar', days: 31 },
+  { name: 'Apr', days: 30 },
+  { name: 'May', days: 31 },
+  { name: 'Jun', days: 30 },
+  { name: 'Jul', days: 31 },
+  { name: 'Aug', days: 31 },
+  { name: 'Sep', days: 30 },
+  { name: 'Oct', days: 31 },
+  { name: 'Nov', days: 30 },
+  { name: 'Dec', days: 31 },
 ];
 
 export function formatInGameDate(dayCount: number): string {
-  const safeDay = Math.max(1, Math.floor(dayCount));
-  let rem = safeDay - 1 + 17; // Day 1 => 18 Kartik, 2026
+  let rem = Math.max(0, Math.floor(dayCount) - 1); // Day 1 => 1 Jan 2026
   let year = 2026;
   let mIdx = 0;
-  while (rem >= INDIAN_MONTHS[mIdx].days) {
-    rem -= INDIAN_MONTHS[mIdx].days;
-    mIdx = (mIdx + 1) % INDIAN_MONTHS.length;
-    if (mIdx === 5) {
-      // Chaitra marks the Indian New Year rollover
+  while (true) {
+    const isLeap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    const monthDays = mIdx === 1 && isLeap ? 29 : CALENDAR_MONTHS[mIdx].days;
+    if (rem < monthDays) break;
+    rem -= monthDays;
+    mIdx += 1;
+    if (mIdx >= CALENDAR_MONTHS.length) {
+      mIdx = 0;
       year += 1;
     }
   }
   const dayOfMonth = rem + 1;
-  return `${dayOfMonth} ${INDIAN_MONTHS[mIdx].name}, ${year}`;
+  return `${dayOfMonth} ${CALENDAR_MONTHS[mIdx].name} ${year}`;
 }
 
 export interface WeaponSpec {

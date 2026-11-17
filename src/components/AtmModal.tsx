@@ -4,6 +4,7 @@ import {
   AtmLandmarkHud,
   BankAccountHudState,
   SAVINGS_ANNUAL_RATE,
+  formatInGameDate,
   formatRs,
   formatRsExact,
 } from '../types/game';
@@ -249,7 +250,7 @@ export const AtmModal: React.FC<AtmModalProps> = ({
                   {bank.passbook.slice(0, 6).map((row) => (
                     <div key={row.id} className="py-1.5 flex items-center justify-between gap-2">
                       <div className="min-w-0">
-                        <span className="text-slate-400">Day {row.day} · </span>
+                        <span className="text-slate-400">{formatInGameDate(row.day)} · </span>
                         <span className="text-slate-200 truncate">{row.note}</span>
                       </div>
                       <div className="shrink-0 text-right">

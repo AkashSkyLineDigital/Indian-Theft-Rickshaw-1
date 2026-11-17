@@ -410,353 +410,388 @@ export const HUD: React.FC<HUDProps> = ({
           </>
         )}
 
-        {/* Top-Left Borderless Header, Clock, Waypoint & Alerts */}
+        {/* Top Responsive Row: Left Title/Clock/Alerts + Right Compact Action Pills & Vitals */}
         {!inCutscene && (
-          <div className="absolute top-[clamp(8px,2vw,16px)] left-[clamp(8px,2vw,16px)] flex flex-col gap-1 max-w-[46vw] sm:max-w-xs">
-            <div className="flex items-center gap-2 drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
-              <span className="font-display font-bold text-[clamp(11px,2.4vw,14px)] tracking-wider text-[#FBBF24] truncate">
-                INDIAN THEFT RICKSHAW
-              </span>
-              <span className="hidden sm:inline text-white/40">·</span>
-              <span className="hidden sm:inline text-[11px] font-mono-num font-semibold text-slate-100 shrink-0">
-                KILLS {hud.kills}
-              </span>
-            </div>
-
-            {/* Borderless Day-Noon-Midnight Clock Strip */}
-            <div className="flex flex-wrap items-center gap-1.5 text-[clamp(10px,2vw,11px)] font-mono-num self-start drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
-              <TimeIcon
-                className={`w-3.5 h-3.5 shrink-0 ${
-                  hud.timeOfDay.phaseLabel === 'MIDNIGHT'
-                    ? 'text-sky-300'
-                    : hud.timeOfDay.phaseLabel === 'EVENING'
-                      ? 'text-orange-400'
-                      : 'text-amber-400'
-                }`}
-              />
-              <span className="font-bold text-white">{hud.timeOfDay.formattedTime}</span>
-              <span className="text-white/40">·</span>
-              <span className="text-[#FBBF24] font-semibold">{hud.timeOfDay.phaseLabel}</span>
-              <span className="text-white/40">·</span>
-              <span className="text-[#38BDF8] font-medium truncate">{hud.bank.calendarDate}</span>
-            </div>
-
-            {/* Active GPS Waypoint */}
-            {hud.waypoint?.active && (
-              <div className="pointer-events-auto flex items-center justify-between gap-2.5 px-2.5 py-1.5 hud-glass border-amber-400/45 rounded-lg max-w-xs shadow-md hud-text-shadow">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Navigation
-                    style={{ transform: `rotate(${hud.waypoint.bearingDeg}deg)` }}
-                    className="w-3.5 h-3.5 text-[#FBBF24] shrink-0 transition-transform duration-100"
-                  />
-                  <div className="flex flex-col min-w-0">
-                    <span className="text-[11px] font-semibold text-amber-200 truncate">
-                      {hud.waypoint.label}
-                    </span>
-                    <span className="text-[10px] font-mono-num text-slate-200">
-                      GPS: {hud.waypoint.distanceMeters}m
-                    </span>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={onClearWaypoint}
-                  title="Clear Waypoint (Backspace)"
-                  className="p-1 bg-white/10 hover:bg-red-500/40 rounded text-slate-200 hover:text-white cursor-pointer shrink-0"
-                >
-                  <X className="w-3 h-3" />
-                </button>
+          <div className="fixed inset-x-0 top-0 p-[clamp(6px,1.8vw,16px)] flex items-start justify-between gap-2 pointer-events-none">
+            {/* Top-Left Borderless Header, Clock, Waypoint & Alerts */}
+            <div className="flex flex-col gap-1 min-w-0 flex-1 max-w-[48vw] sm:max-w-[38vw] lg:max-w-xs">
+              <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
+                <span className="font-display font-bold text-[clamp(10px,2.3vw,14px)] tracking-wider text-[#FBBF24] truncate">
+                  INDIAN THEFT RICKSHAW
+                </span>
+                <span className="hidden md:inline text-white/40">·</span>
+                <span className="hidden md:inline text-[11px] font-mono-num font-semibold text-slate-100 shrink-0">
+                  KILLS {hud.kills}
+                </span>
               </div>
-            )}
 
-            {/* Blessed Status Buff */}
-            {hud.blessedRemainingSec > 0 && (
-              <div className="px-2.5 py-1.5 hud-glass border-amber-400/45 rounded-lg max-w-xs flex flex-col gap-1 hud-text-shadow">
-                <div className="flex items-center justify-between text-[10px] font-mono-num text-amber-200">
-                  <span className="flex items-center gap-1 font-bold">
-                    <Sparkles className="w-3 h-3 text-[#FBBF24]" />
-                    BLESSED · +HP &amp; STAMINA
-                  </span>
-                  <span className="font-bold text-[#FBBF24]">{hud.blessedRemainingSec}s</span>
-                </div>
-                <div className="w-full h-1 bg-black/40 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-[#F59E0B] transition-all duration-150"
-                    style={{
-                      width: `${Math.max(0, Math.min(100, (hud.blessedRemainingSec / Math.max(1, hud.blessedTotalSec)) * 100))}%`,
-                    }}
-                  />
-                </div>
+              {/* Borderless Clock & Calendar Date Strip */}
+              <div className="flex flex-wrap items-center gap-1 sm:gap-1.5 text-[clamp(9px,1.9vw,11px)] font-mono-num self-start drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] max-w-full">
+                <TimeIcon
+                  className={`w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0 ${
+                    hud.timeOfDay.phaseLabel === 'MIDNIGHT'
+                      ? 'text-sky-300'
+                      : hud.timeOfDay.phaseLabel === 'EVENING'
+                        ? 'text-orange-400'
+                        : 'text-amber-400'
+                  }`}
+                />
+                <span className="font-bold text-white">{hud.timeOfDay.formattedTime}</span>
+                <span className="text-white/40">·</span>
+                <span className="text-[#FBBF24] font-semibold hidden xs:inline sm:inline">
+                  {hud.timeOfDay.phaseLabel}
+                </span>
+                <span className="text-white/40 hidden xs:inline sm:inline">·</span>
+                <span className="text-[#38BDF8] font-medium truncate">{hud.bank.calendarDate}</span>
               </div>
-            )}
 
-            {hud.mission.active && (
-              <div className="px-3 py-2 hud-glass border-sky-400/45 rounded-lg max-w-xs flex flex-col gap-1 hud-text-shadow">
-                <div className="flex items-center justify-between text-[11px] font-mono-num">
-                  <span className="text-[#38BDF8] font-bold tracking-wider">POLICE DOG RESCUE</span>
-                  <span className="text-[#FBBF24] font-bold">
-                    {formatTimer(hud.mission.timeRemainingSec)}
-                  </span>
-                </div>
-                <div className="text-xs font-medium text-slate-100 leading-snug">
-                  {hud.mission.objectiveText}
-                </div>
-                <div className="text-[10px] font-mono-num text-slate-300">
-                  GPS Target: {hud.mission.distanceMeters}m away
-                </div>
-              </div>
-            )}
-
-            {hud.witnessAlert && (
-              <div className="px-2.5 py-1.5 bg-red-950/65 backdrop-blur-md border border-red-400/50 rounded-lg max-w-xs flex flex-col gap-1 hud-text-shadow">
-                <div className="flex items-center justify-between text-[10px] font-mono-num text-red-100">
-                  <span className="flex items-center gap-1.5 font-bold">
-                    <PhoneCall className="w-3 h-3 text-[#FBBF24] animate-pulse" />
-                    WITNESS CALLING 100
-                  </span>
-                  <span className="font-bold text-[#FBBF24]">{hud.witnessAlert.remainingSec.toFixed(1)}s</span>
-                </div>
-                <div className="text-[10px] text-slate-100">
-                  {hud.witnessAlert.npcName} ({hud.witnessAlert.reason})
-                </div>
-                <div className="w-full h-1 bg-black/45 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-[#F59E0B] transition-all duration-100"
-                    style={{
-                      width: `${Math.max(0, Math.min(100, ((hud.witnessAlert.totalSec - hud.witnessAlert.remainingSec) / Math.max(0.1, hud.witnessAlert.totalSec)) * 100))}%`,
-                    }}
-                  />
-                </div>
-              </div>
-            )}
-
-            {hud.policeWarning && (
-              <div className="pointer-events-auto px-2.5 py-2 bg-red-950/65 backdrop-blur-md border border-red-400/50 rounded-lg text-xs font-medium text-red-100 max-w-xs flex flex-col gap-1.5 hud-text-shadow">
-                <span>{hud.policeWarning}</span>
-                {hud.wantedLevel >= 1 && (
-                  <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                    <button
-                      type="button"
-                      onClick={onSurrender}
-                      className="px-2 py-1 bg-sky-600/85 hover:bg-sky-500 rounded text-white text-[10px] font-mono-num font-bold cursor-pointer"
-                    >
-                      [Hold {formatKeyCode(keybinds.surrender)}] Surrender
-                    </button>
-                    {hud.streetBribe?.available && (
-                      <button
-                        type="button"
-                        onClick={onOfferStreetBribe}
-                        className="px-2 py-1 bg-[#F59E0B] hover:bg-[#FBBF24] rounded text-[#0E1118] text-[10px] font-mono-num font-bold cursor-pointer"
-                      >
-                        [{formatKeyCode(keybinds.shop)}] Chai-Paani {formatRs(hud.streetBribe.amount)}
-                      </button>
-                    )}
-                  </div>
-                )}
-                {hud.surrenderHoldPct > 0 && (
-                  <div className="flex flex-col gap-0.5 pt-0.5">
-                    <span className="text-[10px] font-mono-num text-sky-200 font-bold">
-                      SURRENDERING... {hud.surrenderHoldPct}%
-                    </span>
-                    <div className="w-full h-1 bg-black/45 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-[#38BDF8] transition-all duration-75"
-                        style={{ width: `${hud.surrenderHoldPct}%` }}
-                      />
+              {/* Active GPS Waypoint */}
+              {hud.waypoint?.active && (
+                <div className="pointer-events-auto flex items-center justify-between gap-2 px-2 sm:px-2.5 py-1 sm:py-1.5 hud-glass border-amber-400/45 rounded-lg max-w-xs shadow-md hud-text-shadow">
+                  <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+                    <Navigation
+                      style={{ transform: `rotate(${hud.waypoint.bearingDeg}deg)` }}
+                      className="w-3.5 h-3.5 text-[#FBBF24] shrink-0 transition-transform duration-100"
+                    />
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-[10px] sm:text-[11px] font-semibold text-amber-200 truncate">
+                        {hud.waypoint.label}
+                      </span>
+                      <span className="text-[9px] sm:text-[10px] font-mono-num text-slate-200">
+                        GPS: {hud.waypoint.distanceMeters}m
+                      </span>
                     </div>
                   </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
+                  <button
+                    type="button"
+                    onClick={onClearWaypoint}
+                    title="Clear Waypoint (Backspace)"
+                    className="p-1 bg-white/10 hover:bg-red-500/40 rounded text-slate-200 hover:text-white cursor-pointer shrink-0"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
 
-        {/* Top-Right: Minimal Translucent Shortcut Pills + Borderless Vitals Cluster */}
-        {!inCutscene && (
-          <div className="absolute top-[clamp(8px,2vw,16px)] right-[clamp(8px,2vw,16px)] flex flex-col items-end gap-2 max-w-[52vw] sm:max-w-none">
-            {/* Desktop Minimal Translucent Pill Action Bar */}
-            <div className="hidden sm:flex items-center gap-1 pointer-events-auto flex-wrap justify-end">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.currentTarget.blur();
-                  onToggleFirstPerson();
-                }}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)] ${
-                  hud.cameraMode === 'first_person'
-                    ? 'bg-sky-500/80 border border-sky-300/75 text-white backdrop-blur-sm'
-                    : hud.cameraMode === 'third_close'
-                      ? 'bg-indigo-500/70 border border-indigo-300/70 text-white backdrop-blur-sm'
-                      : 'bg-black/25 hover:bg-black/45 border border-white/10 text-slate-100 backdrop-blur-sm'
-                }`}
-              >
-                <Eye className="w-3.5 h-3.5" />
-                <span>
-                  {hud.cameraMode === 'first_person'
-                    ? `FPV (${formatKeyCode(keybinds.camera)})`
-                    : hud.cameraMode === 'third_close'
-                      ? `3P Close (${formatKeyCode(keybinds.camera)})`
-                      : `3P Far (${formatKeyCode(keybinds.camera)})`}
-                </span>
-              </button>
-              {canFirearm && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.currentTarget.blur();
-                    onToggleAds();
-                  }}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)] ${
-                    hud.adsActive
-                      ? 'bg-[#F59E0B] border border-amber-200 text-[#0E1118]'
-                      : 'bg-black/25 hover:bg-black/45 border border-amber-400/30 text-[#FBBF24] backdrop-blur-sm'
-                  }`}
-                >
-                  <Crosshair className="w-3.5 h-3.5" />
-                  <span>
-                    {hud.adsActive
-                      ? `Scoped (${formatKeyCode(keybinds.scope)})`
-                      : `Scope (${formatKeyCode(keybinds.scope)})`}
-                  </span>
-                </button>
+              {/* Blessed Status Buff */}
+              {hud.blessedRemainingSec > 0 && (
+                <div className="px-2.5 py-1.5 hud-glass border-amber-400/45 rounded-lg max-w-xs flex flex-col gap-1 hud-text-shadow">
+                  <div className="flex items-center justify-between text-[10px] font-mono-num text-amber-200">
+                    <span className="flex items-center gap-1 font-bold">
+                      <Sparkles className="w-3 h-3 text-[#FBBF24]" />
+                      BLESSED · +HP &amp; STAMINA
+                    </span>
+                    <span className="font-bold text-[#FBBF24]">{hud.blessedRemainingSec}s</span>
+                  </div>
+                  <div className="w-full h-1 bg-black/40 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-[#F59E0B] transition-all duration-150"
+                      style={{
+                        width: `${Math.max(0, Math.min(100, (hud.blessedRemainingSec / Math.max(1, hud.blessedTotalSec)) * 100))}%`,
+                      }}
+                    />
+                  </div>
+                </div>
               )}
-              {(hud.hasHelmet || hud.currentVehicleKind === 'bike') && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.currentTarget.blur();
-                    onToggleHelmet();
-                  }}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)] ${
-                    hud.helmetOn
-                      ? 'bg-emerald-500/75 border border-emerald-300/70 text-white backdrop-blur-sm'
-                      : 'bg-black/25 hover:bg-black/45 border border-amber-400/30 text-[#FBBF24] backdrop-blur-sm'
-                  }`}
-                >
-                  <HardHat className="w-3.5 h-3.5" />
-                  <span>
-                    {hud.helmetOn
-                      ? `Helmet ON (${formatKeyCode(keybinds.helmet)})`
-                      : `Helmet (${formatKeyCode(keybinds.helmet)})`}
-                  </span>
-                </button>
+
+              {hud.mission.active && (
+                <div className="px-2.5 sm:px-3 py-1.5 sm:py-2 hud-glass border-sky-400/45 rounded-lg max-w-xs flex flex-col gap-1 hud-text-shadow">
+                  <div className="flex items-center justify-between text-[10px] sm:text-[11px] font-mono-num">
+                    <span className="text-[#38BDF8] font-bold tracking-wider">POLICE DOG RESCUE</span>
+                    <span className="text-[#FBBF24] font-bold">
+                      {formatTimer(hud.mission.timeRemainingSec)}
+                    </span>
+                  </div>
+                  <div className="text-[11px] sm:text-xs font-medium text-slate-100 leading-snug">
+                    {hud.mission.objectiveText}
+                  </div>
+                  <div className="text-[9px] sm:text-[10px] font-mono-num text-slate-300">
+                    GPS Target: {hud.mission.distanceMeters}m away
+                  </div>
+                </div>
               )}
-              {voiceMicEnabled && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.currentTarget.blur();
-                    onStartMicReply();
-                  }}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)] ${
-                    hud.micState.active
-                      ? 'bg-red-500/80 border border-red-300 text-white backdrop-blur-sm'
-                      : 'bg-black/25 hover:bg-black/45 border border-white/10 text-emerald-300 backdrop-blur-sm'
-                  }`}
-                >
-                  <Mic className="w-3.5 h-3.5" />
-                  <span>
-                    {hud.micState.active
-                      ? `Mic ON (${formatKeyCode(keybinds.mic)})`
-                      : `Mic (${formatKeyCode(keybinds.mic)})`}
-                  </span>
-                </button>
+
+              {hud.witnessAlert && (
+                <div className="px-2.5 py-1.5 bg-red-950/65 backdrop-blur-md border border-red-400/50 rounded-lg max-w-xs flex flex-col gap-1 hud-text-shadow">
+                  <div className="flex items-center justify-between text-[10px] font-mono-num text-red-100">
+                    <span className="flex items-center gap-1.5 font-bold">
+                      <PhoneCall className="w-3 h-3 text-[#FBBF24] animate-pulse" />
+                      WITNESS CALLING 100
+                    </span>
+                    <span className="font-bold text-[#FBBF24]">{hud.witnessAlert.remainingSec.toFixed(1)}s</span>
+                  </div>
+                  <div className="text-[10px] text-slate-100">
+                    {hud.witnessAlert.npcName} ({hud.witnessAlert.reason})
+                  </div>
+                  <div className="w-full h-1 bg-black/45 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-[#F59E0B] transition-all duration-100"
+                      style={{
+                        width: `${Math.max(0, Math.min(100, ((hud.witnessAlert.totalSec - hud.witnessAlert.remainingSec) / Math.max(0.1, hud.witnessAlert.totalSec)) * 100))}%`,
+                      }}
+                    />
+                  </div>
+                </div>
               )}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.currentTarget.blur();
-                  onOpenMap();
-                }}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/45 border border-white/10 text-[#38BDF8] text-[11px] font-semibold backdrop-blur-sm transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]"
-              >
-                <MapIcon className="w-3.5 h-3.5" />
-                <span>Map ({formatKeyCode(keybinds.map)})</span>
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.currentTarget.blur();
-                  onOpenWheel();
-                }}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/45 border border-white/10 text-slate-100 text-[11px] font-semibold backdrop-blur-sm transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]"
-              >
-                <Disc className="w-3.5 h-3.5 text-[#FBBF24]" />
-                <span>Wheel ({formatKeyCode(keybinds.wheel)})</span>
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.currentTarget.blur();
-                  onOpenPhone();
-                }}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/45 border border-white/10 text-[#38BDF8] text-[11px] font-semibold backdrop-blur-sm transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]"
-              >
-                <Smartphone className="w-3.5 h-3.5" />
-                <span>Phone ({formatKeyCode(keybinds.phone)})</span>
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.currentTarget.blur();
-                  onOpenShop();
-                }}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/45 border border-white/10 text-[#FBBF24] text-[11px] font-semibold backdrop-blur-sm transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]"
-              >
-                <ShoppingBag className="w-3.5 h-3.5" />
-                <span>Shastra ({formatKeyCode(keybinds.shop)})</span>
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.currentTarget.blur();
-                  onOpenSettings();
-                }}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/45 border border-white/10 text-slate-100 text-[11px] font-semibold backdrop-blur-sm transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]"
-              >
-                <Settings className="w-3.5 h-3.5" />
-                <span>Settings</span>
-              </button>
+
+              {hud.policeWarning && (
+                <div className="pointer-events-auto px-2.5 py-2 bg-red-950/65 backdrop-blur-md border border-red-400/50 rounded-lg text-[11px] sm:text-xs font-medium text-red-100 max-w-xs flex flex-col gap-1.5 hud-text-shadow">
+                  <span>{hud.policeWarning}</span>
+                  {hud.wantedLevel >= 1 && (
+                    <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                      <button
+                        type="button"
+                        onClick={onSurrender}
+                        className="px-2 py-1 bg-sky-600/85 hover:bg-sky-500 rounded text-white text-[10px] font-mono-num font-bold cursor-pointer"
+                      >
+                        [Hold {formatKeyCode(keybinds.surrender)}] Surrender
+                      </button>
+                      {hud.streetBribe?.available && (
+                        <button
+                          type="button"
+                          onClick={onOfferStreetBribe}
+                          className="px-2 py-1 bg-[#F59E0B] hover:bg-[#FBBF24] rounded text-[#0E1118] text-[10px] font-mono-num font-bold cursor-pointer"
+                        >
+                          [{formatKeyCode(keybinds.shop)}] Chai-Paani {formatRs(hud.streetBribe.amount)}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {hud.surrenderHoldPct > 0 && (
+                    <div className="flex flex-col gap-0.5 pt-0.5">
+                      <span className="text-[10px] font-mono-num text-sky-200 font-bold">
+                        SURRENDERING... {hud.surrenderHoldPct}%
+                      </span>
+                      <div className="w-full h-1 bg-black/45 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-[#38BDF8] transition-all duration-75"
+                          style={{ width: `${hud.surrenderHoldPct}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
-            {/* Mobile Compact Action Pills (hidden when Touch HUD renders customizable Phone/Wheel/Settings buttons) */}
-            {!isTouchHud && (
-              <div className="flex sm:hidden items-center gap-1 pointer-events-auto">
+            {/* Top-Right: Adaptive Translucent Shortcut Pills + Borderless Vitals Cluster */}
+            <div className="flex flex-col items-end gap-1.5 sm:gap-2 min-w-0 max-w-[50vw] sm:max-w-[58vw] lg:max-w-[62vw] shrink-0">
+              {/* Desktop / Tablet Action Bar: auto-shortens on narrow screens so it NEVER hides left title/menu */}
+              <div className="hidden sm:flex items-center gap-1 pointer-events-auto flex-wrap justify-end">
                 <button
                   type="button"
+                  title={`Cycle Camera (${formatKeyCode(keybinds.camera)})`}
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    onToggleFirstPerson();
+                  }}
+                  className={`flex items-center gap-1 px-1.5 lg:px-2.5 py-1 rounded-full text-[10px] lg:text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)] ${
+                    hud.cameraMode === 'first_person'
+                      ? 'bg-sky-500/80 border border-sky-300/75 text-white backdrop-blur-sm'
+                      : hud.cameraMode === 'third_close'
+                        ? 'bg-indigo-500/70 border border-indigo-300/70 text-white backdrop-blur-sm'
+                        : 'bg-black/25 hover:bg-black/45 border border-white/10 text-slate-100 backdrop-blur-sm'
+                  }`}
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  <span className="hidden xl:inline">
+                    {hud.cameraMode === 'first_person'
+                      ? `FPV (${formatKeyCode(keybinds.camera)})`
+                      : hud.cameraMode === 'third_close'
+                        ? `3P Close (${formatKeyCode(keybinds.camera)})`
+                        : `3P Far (${formatKeyCode(keybinds.camera)})`}
+                  </span>
+                  <span className="hidden md:inline xl:hidden">
+                    {hud.cameraMode === 'first_person'
+                      ? 'FPV'
+                      : hud.cameraMode === 'third_close'
+                        ? '3P+'
+                        : 'Cam'}
+                  </span>
+                </button>
+                {canFirearm && (
+                  <button
+                    type="button"
+                    title={`Scope (${formatKeyCode(keybinds.scope)})`}
+                    onClick={(e) => {
+                      e.currentTarget.blur();
+                      onToggleAds();
+                    }}
+                    className={`flex items-center gap-1 px-1.5 lg:px-2.5 py-1 rounded-full text-[10px] lg:text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)] ${
+                      hud.adsActive
+                        ? 'bg-[#F59E0B] border border-amber-200 text-[#0E1118]'
+                        : 'bg-black/25 hover:bg-black/45 border border-amber-400/30 text-[#FBBF24] backdrop-blur-sm'
+                    }`}
+                  >
+                    <Crosshair className="w-3.5 h-3.5" />
+                    <span className="hidden xl:inline">
+                      {hud.adsActive
+                        ? `Scoped (${formatKeyCode(keybinds.scope)})`
+                        : `Scope (${formatKeyCode(keybinds.scope)})`}
+                    </span>
+                    <span className="hidden md:inline xl:hidden">
+                      {hud.adsActive ? 'ADS' : 'Scope'}
+                    </span>
+                  </button>
+                )}
+                {(hud.hasHelmet || hud.currentVehicleKind === 'bike') && (
+                  <button
+                    type="button"
+                    title={`Toggle Helmet (${formatKeyCode(keybinds.helmet)})`}
+                    onClick={(e) => {
+                      e.currentTarget.blur();
+                      onToggleHelmet();
+                    }}
+                    className={`flex items-center gap-1 px-1.5 lg:px-2.5 py-1 rounded-full text-[10px] lg:text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)] ${
+                      hud.helmetOn
+                        ? 'bg-emerald-500/75 border border-emerald-300/70 text-white backdrop-blur-sm'
+                        : 'bg-black/25 hover:bg-black/45 border border-amber-400/30 text-[#FBBF24] backdrop-blur-sm'
+                    }`}
+                  >
+                    <HardHat className="w-3.5 h-3.5" />
+                    <span className="hidden xl:inline">
+                      {hud.helmetOn
+                        ? `Helmet ON (${formatKeyCode(keybinds.helmet)})`
+                        : `Helmet (${formatKeyCode(keybinds.helmet)})`}
+                    </span>
+                  </button>
+                )}
+                {voiceMicEnabled && (
+                  <button
+                    type="button"
+                    title={`Voice Mic (${formatKeyCode(keybinds.mic)})`}
+                    onClick={(e) => {
+                      e.currentTarget.blur();
+                      onStartMicReply();
+                    }}
+                    className={`flex items-center gap-1 px-1.5 lg:px-2.5 py-1 rounded-full text-[10px] lg:text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)] ${
+                      hud.micState.active
+                        ? 'bg-red-500/80 border border-red-300 text-white backdrop-blur-sm'
+                        : 'bg-black/25 hover:bg-black/45 border border-white/10 text-emerald-300 backdrop-blur-sm'
+                    }`}
+                  >
+                    <Mic className="w-3.5 h-3.5" />
+                    <span className="hidden xl:inline">
+                      {hud.micState.active
+                        ? `Mic ON (${formatKeyCode(keybinds.mic)})`
+                        : `Mic (${formatKeyCode(keybinds.mic)})`}
+                    </span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  title={`3D City Map (${formatKeyCode(keybinds.map)})`}
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    onOpenMap();
+                  }}
+                  className="flex items-center gap-1 px-1.5 lg:px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/45 border border-white/10 text-[#38BDF8] text-[10px] lg:text-[11px] font-semibold backdrop-blur-sm transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]"
+                >
+                  <MapIcon className="w-3.5 h-3.5" />
+                  <span className="hidden xl:inline">Map ({formatKeyCode(keybinds.map)})</span>
+                  <span className="hidden md:inline xl:hidden">Map</span>
+                </button>
+                <button
+                  type="button"
+                  title={`Weapon Wheel (${formatKeyCode(keybinds.wheel)})`}
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    onOpenWheel();
+                  }}
+                  className="flex items-center gap-1 px-1.5 lg:px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/45 border border-white/10 text-slate-100 text-[10px] lg:text-[11px] font-semibold backdrop-blur-sm transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]"
+                >
+                  <Disc className="w-3.5 h-3.5 text-[#FBBF24]" />
+                  <span className="hidden xl:inline">Wheel ({formatKeyCode(keybinds.wheel)})</span>
+                </button>
+                <button
+                  type="button"
+                  title={`Smartphone (${formatKeyCode(keybinds.phone)})`}
                   onClick={(e) => {
                     e.currentTarget.blur();
                     onOpenPhone();
                   }}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/45 border border-white/10 text-[#38BDF8] text-[10px] font-semibold backdrop-blur-sm cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]"
+                  className="flex items-center gap-1 px-1.5 lg:px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/45 border border-white/10 text-[#38BDF8] text-[10px] lg:text-[11px] font-semibold backdrop-blur-sm transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]"
                 >
-                  <Smartphone className="w-3 h-3" />
-                  <span>PHONE</span>
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span className="hidden xl:inline">Phone ({formatKeyCode(keybinds.phone)})</span>
+                  <span className="hidden md:inline xl:hidden">Phone</span>
                 </button>
                 <button
                   type="button"
+                  title={`Shastra Armory (${formatKeyCode(keybinds.shop)})`}
                   onClick={(e) => {
                     e.currentTarget.blur();
                     onOpenShop();
                   }}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/45 border border-white/10 text-[#FBBF24] text-[10px] font-semibold backdrop-blur-sm cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]"
+                  className="flex items-center gap-1 px-1.5 lg:px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/45 border border-white/10 text-[#FBBF24] text-[10px] lg:text-[11px] font-semibold backdrop-blur-sm transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]"
                 >
-                  <ShoppingBag className="w-3 h-3" />
-                  <span>GUNS</span>
+                  <ShoppingBag className="w-3.5 h-3.5" />
+                  <span className="hidden xl:inline">Shastra ({formatKeyCode(keybinds.shop)})</span>
+                  <span className="hidden md:inline xl:hidden">Shop</span>
                 </button>
                 <button
                   type="button"
+                  title="Settings & Keybinds"
                   onClick={(e) => {
                     e.currentTarget.blur();
                     onOpenSettings();
                   }}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/45 border border-white/10 text-slate-100 text-[10px] font-semibold backdrop-blur-sm cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]"
+                  className="flex items-center gap-1 px-1.5 lg:px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/45 border border-white/10 text-slate-100 text-[10px] lg:text-[11px] font-semibold backdrop-blur-sm transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]"
                 >
-                  <Settings className="w-3 h-3" />
-                  <span>MENU</span>
+                  <Settings className="w-3.5 h-3.5" />
+                  <span className="hidden lg:inline">Settings</span>
                 </button>
               </div>
-            )}
+
+              {/* Ultra-Compact Mobile Action Pills (< 640px when Touch HUD is off): icon-only + crisp spacing */}
+              {!isTouchHud && (
+                <div className="flex sm:hidden items-center gap-1 flex-wrap justify-end pointer-events-auto">
+                  <button
+                    type="button"
+                    aria-label="Camera"
+                    onClick={(e) => {
+                      e.currentTarget.blur();
+                      onToggleFirstPerson();
+                    }}
+                    className="p-1.5 rounded-full bg-black/30 hover:bg-black/50 border border-white/15 text-slate-100 backdrop-blur-sm cursor-pointer"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Phone"
+                    onClick={(e) => {
+                      e.currentTarget.blur();
+                      onOpenPhone();
+                    }}
+                    className="p-1.5 rounded-full bg-black/30 hover:bg-black/50 border border-white/15 text-[#38BDF8] backdrop-blur-sm cursor-pointer"
+                  >
+                    <Smartphone className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Shop"
+                    onClick={(e) => {
+                      e.currentTarget.blur();
+                      onOpenShop();
+                    }}
+                    className="p-1.5 rounded-full bg-black/30 hover:bg-black/50 border border-white/15 text-[#FBBF24] backdrop-blur-sm cursor-pointer"
+                  >
+                    <ShoppingBag className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Settings"
+                    onClick={(e) => {
+                      e.currentTarget.blur();
+                      onOpenSettings();
+                    }}
+                    className="p-1.5 rounded-full bg-black/30 hover:bg-black/50 border border-white/15 text-slate-100 backdrop-blur-sm cursor-pointer"
+                  >
+                    <Settings className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
 
             {/* Borderless Floating Vitals Cluster (No Outer Card Box) */}
             <div className="w-[clamp(164px,42vw,230px)] flex flex-col items-end gap-1.5">
@@ -955,6 +990,7 @@ export const HUD: React.FC<HUDProps> = ({
                   {t.text}
                 </div>
               ))}
+            </div>
             </div>
           </div>
         )}
