@@ -10,6 +10,7 @@ import { GunShopModal } from './components/GunShopModal';
 import { HomeWardrobeModal } from './components/HomeWardrobeModal';
 import { HouseNamingModal } from './components/HouseNamingModal';
 import { HUD } from './components/HUD';
+import { HudEditorModal } from './components/HudEditorModal';
 import { InGamePhone } from './components/InGamePhone';
 import { JailHudOverlay } from './components/JailHudOverlay';
 import { LicenseOfficeModal } from './components/LicenseOfficeModal';
@@ -37,6 +38,7 @@ import {
   StreetStallHudInfo,
   WeaponId,
   formatInGameDate,
+  normalizeSettings,
 } from './types/game';
 
 const SETTINGS_STORAGE_KEY = 'itr_settings_v1';
@@ -45,10 +47,10 @@ function loadSavedSettings(): GameSettings {
   try {
     const raw =
       localStorage.getItem(SETTINGS_STORAGE_KEY) ?? localStorage.getItem('san_verde_settings_v1');
-    if (!raw) return { ...DEFAULT_SETTINGS };
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    if (!raw) return normalizeSettings(DEFAULT_SETTINGS);
+    return normalizeSettings(JSON.parse(raw));
   } catch {
-    return { ...DEFAULT_SETTINGS };
+    return normalizeSettings(DEFAULT_SETTINGS);
   }
 }
 
@@ -75,11 +77,17 @@ const INITIAL_HUD: HudSnapshot = {
   currentVehicleKind: null,
   vehicleName: '',
   vehicleSpeedKmh: 0,
+  vehicleSteer: 0,
+  vehicleGear: 'N',
+  vehicleHeadlightsOn: true,
+  vehicleFuelPct: 100,
+  vehicleAltitudeM: 0,
   playerX: 0,
   playerZ: 8,
   playerYaw: 0,
   pointerLocked: false,
   firstPerson: false,
+  cameraMode: 'third_far',
   adsActive: false,
   targetInCrosshair: false,
   nearPrompt: null,
@@ -190,6 +198,7 @@ export default function App() {
     fromDebtBailout: false,
   });
   const [settings, setSettings] = useState<GameSettings>(loadSavedSettings);
+  const [hudEditorOpen, setHudEditorOpen] = useState(false);
   const [hud, setHud] = useState<HudSnapshot>(INITIAL_HUD);
   const [toasts, setToasts] = useState<FloatingToast[]>([]);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
@@ -264,6 +273,7 @@ export default function App() {
             setActiveAtm(null);
             setLicenseOfficeOpen(false);
             setWardrobeOpen(false);
+            setHudEditorOpen(false);
             setBankModal({ open: false, fromDebtBailout: false });
           }
           if (nextMode !== 'PLAYING') {
@@ -400,7 +410,8 @@ export default function App() {
         engineRef.current?.requestPointerLock();
         return;
       }
-      if (e.code === 'KeyB') {
+      const kb = settings.keybinds;
+      if (e.code === kb.shop) {
         if (mode === 'PLAYING' && !shopOpen && !confirmGunId) {
           if (engineRef.current?.isStreetBribeAvailable()) {
             engineRef.current.offerStreetBribe();
@@ -411,7 +422,7 @@ export default function App() {
           setShopOpen(false);
           engineRef.current?.setMode('PLAYING');
         }
-      } else if (e.code === 'KeyP') {
+      } else if (e.code === kb.phone) {
         if (mode === 'PLAYING') {
           if (!phoneOpen || phoneMinimized) {
             setMapOpen(false);
@@ -428,7 +439,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [mode, shopOpen, confirmGunId, mapOpen, phoneOpen, phoneMinimized, handleOpenShop]);
+  }, [mode, shopOpen, confirmGunId, mapOpen, phoneOpen, phoneMinimized, handleOpenShop, settings.keybinds.shop, settings.keybinds.phone]);
 
   const handleOpenSettings = () => {
     settingsOriginRef.current =
@@ -574,6 +585,9 @@ export default function App() {
           hud={hud}
           toasts={toasts}
           showControlsStrip={settings.showControlsStrip && !showTouchHud}
+          isTouchHud={showTouchHud}
+          voiceMicEnabled={settings.voiceMicEnabled}
+          keybinds={settings.keybinds}
           onOpenSettings={handleOpenSettings}
           onOpenShop={handleOpenShop}
           onOpenPhone={() => {
@@ -610,6 +624,7 @@ export default function App() {
           onReplyChai={(accept) => engineRef.current?.replyToChai(accept)}
           onStartMicReply={() => engineRef.current?.toggleOrStartMic()}
           onToggleFirstPerson={() => engineRef.current?.toggleFirstPerson()}
+          onToggleHeadlights={() => engineRef.current?.toggleVehicleHeadlights()}
           onToggleAds={() => engineRef.current?.toggleAds()}
           onToggleHelmet={() => engineRef.current?.toggleHelmet()}
           onContextInteract={() => engineRef.current?.triggerContextAction()}
@@ -631,9 +646,13 @@ export default function App() {
         <TouchControls
           inJail={mode === 'JAIL'}
           inVehicle={mode === 'PLAYING' && hud.inVehicle}
+          isChopper={mode === 'PLAYING' && hud.currentVehicleKind === 'chopper'}
+          headlightsOn={hud.vehicleHeadlightsOn}
           canUseMedkit={mode === 'PLAYING' && hud.medkits > 0 && hud.hp < hud.maxHp}
           micListening={mode === 'PLAYING' && hud.micState.active}
+          voiceMicEnabled={settings.voiceMicEnabled}
           firstPerson={hud.firstPerson}
+          cameraMode={hud.cameraMode}
           adsActive={mode === 'PLAYING' && hud.adsActive}
           canAds={mode === 'PLAYING' && hud.activeWeapon !== 'fists'}
           hasHelmet={mode === 'PLAYING' && hud.hasHelmet}
@@ -642,6 +661,7 @@ export default function App() {
           buttonScale={settings.touchButtonScale ?? 1}
           opacity={settings.touchOpacity ?? 0.9}
           movementStyle={settings.touchMovementStyle ?? 'joystick'}
+          customHud={settings.customHud}
           contextLabel={
             mode === 'JAIL'
               ? hud.jail?.nearStation === 'BUNK'
@@ -687,6 +707,7 @@ export default function App() {
           onSprint={(active) => engineRef.current?.setTouchSprint(active)}
           onCameraDelta={(dx, dy) => engineRef.current?.addCameraDelta(dx, dy)}
           onAttack={() => engineRef.current?.triggerAttack()}
+          onAttackHeld={(held) => engineRef.current?.setTouchAttackHeld(held)}
           onJump={() => engineRef.current?.triggerJump()}
           onEnterExit={() => engineRef.current?.triggerEnterExit()}
           onUseMedkit={() => engineRef.current?.useMedkit()}
@@ -694,6 +715,7 @@ export default function App() {
           onToggleMic={() => engineRef.current?.toggleOrStartMic()}
           onToggleFirstPerson={() => engineRef.current?.toggleFirstPerson()}
           onToggleAds={() => engineRef.current?.toggleAds()}
+          onSetAds={(active) => engineRef.current?.setAds(active)}
           onToggleHelmet={() => engineRef.current?.toggleHelmet()}
           onOpenMap={handleToggleMap}
           onOpenWheel={() => engineRef.current?.setWeaponWheelOpen(true)}
@@ -707,6 +729,8 @@ export default function App() {
           onOpenSettings={handleOpenSettings}
           onRadio={() => engineRef.current?.triggerRadioChatter()}
           onHorn={() => engineRef.current?.triggerVehicleHorn()}
+          onToggleHeadlights={() => engineRef.current?.toggleVehicleHeadlights()}
+          onChopperAltitude={(asc, desc) => engineRef.current?.setChopperAltitudeInput(asc, desc)}
           canSurrender={mode === 'PLAYING' && hud.wantedLevel >= 1}
           canStreetBribe={mode === 'PLAYING' && Boolean(hud.streetBribe?.available)}
           onSurrender={() => engineRef.current?.triggerManualSurrender()}
@@ -854,6 +878,7 @@ export default function App() {
 
       {!engineError &&
         mode === 'PAUSED' &&
+        !hudEditorOpen &&
         !shopOpen &&
         !confirmGunId &&
         !bankModal.open &&
@@ -865,6 +890,7 @@ export default function App() {
             settings={settings}
             openedFromTitle={settingsOriginRef.current === 'TITLE'}
             onUpdateSettings={handleUpdateSettings}
+            onOpenHudEditor={() => setHudEditorOpen(true)}
             onResume={handleResumeFromSettings}
             onResetCity={() => engineRef.current?.resetCity()}
             onResetFullGame={handleResetFullGame}
@@ -873,6 +899,17 @@ export default function App() {
             }
           />
         )}
+
+      {!engineError && mode === 'PAUSED' && hudEditorOpen && (
+        <HudEditorModal
+          settings={settings}
+          onSave={(next) => {
+            handleUpdateSettings(next);
+            pushToast({ text: 'Custom HUD layout saved', tone: 'info' });
+          }}
+          onClose={() => setHudEditorOpen(false)}
+        />
+      )}
 
       {!engineError && shopOpen && (
         <GunShopModal
@@ -1013,6 +1050,7 @@ export default function App() {
           cutscene={hud.sleepCutscene}
           houseName={hud.houseName}
           dayCount={hud.timeOfDay.dayCount}
+          calendarDate={hud.bank.calendarDate}
           formattedTime={hud.timeOfDay.formattedTime}
           probationDaysLeft={hud.probationDaysLeft}
           onSkip={() => engineRef.current?.skipSleepCutscene()}

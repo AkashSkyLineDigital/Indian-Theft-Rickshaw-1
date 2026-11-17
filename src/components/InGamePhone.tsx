@@ -55,6 +55,7 @@ import {
   STREET_BRIBE_INR,
   TimeOfDayHud,
   WaypointHudState,
+  formatInGameDate,
   formatRs,
   formatRsExact,
 } from '../types/game';
@@ -698,7 +699,7 @@ export const InGamePhone: React.FC<InGamePhoneProps> = ({
         snapCaption.trim() ||
         `Cruising through ${houseName ? `${houseName}` : 'Bharat Central Chowk'} at ${timeOfDay.formattedTime}`,
       location: 'Madhavpur · Bharat Central Chowk',
-      timeLabel: `Just now · Day ${timeOfDay.dayCount}`,
+      timeLabel: `Just now · ${bank.calendarDate}`,
       likes: Math.floor(18 + Math.random() * 64),
       liked: false,
       comments: [
@@ -752,12 +753,33 @@ export const InGamePhone: React.FC<InGamePhoneProps> = ({
     setCommentDraft('');
   };
 
-  const handleDial = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!code.trim()) return;
-    const res = onApplyCheat(code);
+  const resolveCheatInput = (raw: string): string => {
+    const clean = raw.trim().toUpperCase();
+    const numericMap: Record<string, string> = {
+      '8000': 'COPTER',
+      '2000': 'AUTO',
+      '3000': 'BIKE',
+      '1000': 'CAR',
+      '100': 'POLICE',
+      '9110': 'PAISABARSAO',
+      '7000': 'SHASTRA100',
+      '0000': 'NOCHALLAN',
+      '5555': 'VIPPASS',
+    };
+    return numericMap[clean] ?? clean;
+  };
+
+  const runCheatCode = (raw: string) => {
+    if (!raw.trim()) return;
+    const resolved = resolveCheatInput(raw);
+    const res = onApplyCheat(resolved);
     setFeedback(res.message);
     if (res.ok) setCode('');
+  };
+
+  const handleDial = (e: React.FormEvent) => {
+    e.preventDefault();
+    runCheatCode(code);
   };
 
   const bharatBookPosts = useMemo(() => {
@@ -837,7 +859,7 @@ export const InGamePhone: React.FC<InGamePhoneProps> = ({
     <>
       {/* Persistent Floating Mini-Pill when Phone is Minimized (keeps BharatTube iframe mounted & playing!) */}
       {minimized && (
-        <div className="fixed bottom-3 right-3 z-25 flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-950/85 backdrop-blur-md border border-white/15 shadow-xl pointer-events-auto">
+        <div className="fixed bottom-2 right-2 z-[26] flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-950/85 backdrop-blur-md border border-white/15 shadow-xl pointer-events-auto">
           <Music2
             className={`w-3.5 h-3.5 ${audioActive ? 'text-[#FBBF24] animate-pulse' : 'text-sky-400'}`}
           />
@@ -878,7 +900,7 @@ export const InGamePhone: React.FC<InGamePhoneProps> = ({
         className={
           minimized
             ? 'fixed -left-[480px] top-0 w-[312px] h-[540px] opacity-0 pointer-events-none overflow-hidden'
-            : 'fixed bottom-3 right-3 z-30 w-[min(92vw,312px)] min-h-[min(72vh,460px)] max-h-[min(86vh,620px)] rounded-[28px] border-[3px] border-slate-700/90 bg-slate-950/92 backdrop-blur-xl shadow-[0_20px_60px_rgba(0,0,0,0.85)] flex flex-col overflow-hidden pointer-events-auto'
+            : 'fixed bottom-2 right-1/2 translate-x-1/2 sm:translate-x-0 sm:right-3 sm:bottom-3 z-30 w-[min(94vw,312px)] h-[min(calc(100dvh-16px),580px)] min-h-0 rounded-[28px] border-[3px] border-slate-700/90 bg-slate-950/92 backdrop-blur-xl shadow-[0_20px_60px_rgba(0,0,0,0.85)] flex flex-col overflow-hidden pointer-events-auto'
         }
       >
         {/* Full-Screen Incoming / Outgoing Phone Call Overlay */}
@@ -1138,7 +1160,7 @@ export const InGamePhone: React.FC<InGamePhoneProps> = ({
         )}
 
         {/* Screen Content */}
-        <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2.5 min-h-0">
+        <div className="flex-1 overflow-y-auto touch-pan-y p-3 flex flex-col gap-2.5 min-h-0">
           {app === 'home' && (
             <>
               {/* Live Contextual Alerts */}
@@ -1960,7 +1982,7 @@ export const InGamePhone: React.FC<InGamePhoneProps> = ({
                       <div className="min-w-0">
                         <div className="text-slate-100 font-semibold truncate">{entry.note}</div>
                         <div className="text-[9px] font-mono-num text-slate-400">
-                          D{entry.day} · {entry.timeLabel}
+                          {formatInGameDate(entry.day)} · {entry.timeLabel}
                         </div>
                       </div>
                       <span
@@ -2118,42 +2140,131 @@ export const InGamePhone: React.FC<InGamePhoneProps> = ({
           )}
 
           {app === 'cheats' && (
-            <div className="flex flex-col gap-2.5">
-              <div className="text-xs font-display font-bold text-[#FBBF24] flex items-center gap-1.5">
-                <Terminal className="w-3.5 h-3.5" /> ITR Cheat Dialer &amp; Voice
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-display font-bold text-[#FBBF24] flex items-center gap-1.5">
+                  <Terminal className="w-3.5 h-3.5" /> BHARAT CHEAT TERMINAL
+                </div>
+                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/40 text-[9px] font-mono-num font-bold text-emerald-300">
+                  IBD3D DIALER
+                </span>
               </div>
 
-              <form onSubmit={handleDial} className="flex flex-col gap-1.5">
-                <input
-                  type="text"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  placeholder="PAISABARSAO / SHASTRA100"
-                  className="px-3 py-2 rounded-xl bg-black/50 border border-white/15 focus:border-[#F59E0B] outline-none font-mono-num text-xs uppercase text-slate-100"
-                />
-                <button
-                  type="submit"
-                  className="py-2 rounded-xl bg-[#F59E0B] hover:bg-[#FBBF24] text-slate-950 font-bold text-xs cursor-pointer"
-                >
-                  Dial Code
-                </button>
+              {/* Retro Terminal LCD Readout + Direct Input */}
+              <form
+                onSubmit={handleDial}
+                className="p-2 rounded-2xl bg-[#07110b] border border-emerald-500/45 shadow-inner flex flex-col gap-1.5"
+              >
+                <div className="flex items-center justify-between text-[9px] font-mono-num text-emerald-400/80">
+                  <span>CMD / DIAL CODE</span>
+                  <span>8000·2000·3000·1000·100</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    placeholder="COPTER / 8000"
+                    className="flex-1 min-w-0 px-2.5 py-1.5 rounded-xl bg-black/60 border border-emerald-500/35 focus:border-[#F59E0B] outline-none font-mono-num text-xs font-bold tracking-wider uppercase text-emerald-300"
+                  />
+                  <button
+                    type="submit"
+                    className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-mono-num font-extrabold text-[11px] cursor-pointer shrink-0 flex items-center gap-1"
+                  >
+                    <PhoneCall className="w-3 h-3" />
+                    <span>DIAL</span>
+                  </button>
+                </div>
               </form>
 
               {feedback && (
-                <div className="text-[11px] text-emerald-200 bg-emerald-950/60 border border-emerald-400/40 rounded-xl p-2">
+                <div className="text-[10px] font-mono-num text-emerald-200 bg-emerald-950/70 border border-emerald-400/45 rounded-xl px-2.5 py-1.5 leading-snug">
                   {feedback}
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-1.5 text-[10px] font-mono-num">
-                {['PAISABARSAO', 'SHASTRA100', 'NOCHALLAN', 'VIPPASS'].map((c) => (
+              {/* Touch-Friendly Numeric Keypad */}
+              <div className="grid grid-cols-3 gap-1">
+                {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
                   <button
-                    key={c}
+                    key={digit}
                     type="button"
-                    onClick={() => setCode(c)}
-                    className="py-1.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.12] border border-white/10 text-[#FBBF24] cursor-pointer"
+                    onClick={() => {
+                      setCode((prev) => `${prev}${digit}`.slice(0, 14));
+                    }}
+                    className="h-8 rounded-xl bg-white/[0.06] hover:bg-white/[0.14] active:scale-95 border border-white/10 font-mono-num text-xs font-bold text-slate-100 cursor-pointer transition-transform"
                   >
-                    {c}
+                    {digit}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setCode((prev) => prev.slice(0, -1))}
+                  className="h-8 rounded-xl bg-red-500/20 hover:bg-red-500/35 active:scale-95 border border-red-400/35 font-mono-num text-[10px] font-bold text-red-200 cursor-pointer"
+                >
+                  DEL
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCode((prev) => `${prev}0`.slice(0, 14))}
+                  className="h-8 rounded-xl bg-white/[0.06] hover:bg-white/[0.14] active:scale-95 border border-white/10 font-mono-num text-xs font-bold text-slate-100 cursor-pointer"
+                >
+                  0
+                </button>
+                <button
+                  type="button"
+                  onClick={() => runCheatCode(code)}
+                  className="h-8 rounded-xl bg-[#F59E0B] hover:bg-[#FBBF24] active:scale-95 font-mono-num text-[10px] font-extrabold text-slate-950 cursor-pointer"
+                >
+                  RUN
+                </button>
+              </div>
+
+              {/* Instant Vehicle Spawner Terminal Buttons */}
+              <div className="flex flex-col gap-1 pt-0.5">
+                <div className="text-[9px] font-mono-num text-sky-300/90 uppercase tracking-wider">
+                  Instant Vehicle Spawns (Tap to Spawn)
+                </div>
+                <div className="grid grid-cols-2 gap-1 text-[10px] font-mono-num">
+                  {[
+                    { cmd: 'COPTER', dial: '8000', desc: 'Chopper' },
+                    { cmd: 'AUTO', dial: '2000', desc: 'Auto-Rickshaw' },
+                    { cmd: 'BIKE', dial: '3000', desc: 'Sports Bike' },
+                    { cmd: 'CAR', dial: '1000', desc: 'Sedan Car' },
+                    { cmd: 'POLICE', dial: '100', desc: 'Police SUV' },
+                  ].map((item) => (
+                    <button
+                      key={item.cmd}
+                      type="button"
+                      onClick={() => runCheatCode(item.cmd)}
+                      className="flex items-center justify-between px-2 py-1.5 rounded-xl bg-sky-500/12 hover:bg-sky-500/25 border border-sky-400/35 text-left cursor-pointer transition-colors"
+                    >
+                      <div className="flex flex-col min-w-0 leading-tight">
+                        <span className="font-bold text-sky-200 truncate">{item.cmd}</span>
+                        <span className="text-[8px] text-slate-300 truncate">{item.desc}</span>
+                      </div>
+                      <span className="text-[9px] text-[#FBBF24] font-bold shrink-0 ml-1">{item.dial}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Classic World & Armory Cheats */}
+              <div className="grid grid-cols-2 gap-1 text-[10px] font-mono-num">
+                {[
+                  { cmd: 'PAISABARSAO', dial: '9110' },
+                  { cmd: 'SHASTRA100', dial: '7000' },
+                  { cmd: 'NOCHALLAN', dial: '0000' },
+                  { cmd: 'VIPPASS', dial: '5555' },
+                ].map((c) => (
+                  <button
+                    key={c.cmd}
+                    type="button"
+                    onClick={() => runCheatCode(c.cmd)}
+                    className="flex items-center justify-between px-2 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-400/30 text-[#FBBF24] cursor-pointer"
+                  >
+                    <span className="font-bold truncate">{c.cmd}</span>
+                    <span className="text-[8px] text-slate-300 shrink-0 ml-1">{c.dial}</span>
                   </button>
                 ))}
               </div>

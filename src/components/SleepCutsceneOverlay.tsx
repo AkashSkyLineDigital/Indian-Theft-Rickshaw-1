@@ -1,11 +1,12 @@
 import React, { useEffect } from 'react';
 import { BedDouble, Landmark, Moon, ShieldAlert, SkipForward, Sunrise } from 'lucide-react';
-import { SleepCutsceneHud } from '../types/game';
+import { SleepCutsceneHud, formatInGameDate } from '../types/game';
 
 interface SleepCutsceneOverlayProps {
   cutscene: SleepCutsceneHud;
   houseName: string | null;
   dayCount: number;
+  calendarDate?: string;
   formattedTime: string;
   probationDaysLeft: number;
   onSkip: () => void;
@@ -21,6 +22,7 @@ export const SleepCutsceneOverlay: React.FC<SleepCutsceneOverlayProps> = ({
   cutscene,
   houseName,
   dayCount,
+  calendarDate,
   formattedTime,
   probationDaysLeft,
   onSkip,
@@ -83,7 +85,7 @@ export const SleepCutsceneOverlay: React.FC<SleepCutsceneOverlayProps> = ({
                 {cutscene.title}
               </div>
               <div className="text-[11px] font-mono-num text-slate-300">
-                {isJail ? 'Central Jail Cell' : houseName ?? 'Apna Ghar Bedroom'} · Day {dayCount}{' '}
+                {isJail ? 'Central Jail Cell' : houseName ?? 'Apna Ghar Bedroom'} · {calendarDate ?? formatInGameDate(dayCount)}{' '}
                 · {formattedTime} · {cutscene.stageLabel}
               </div>
             </div>

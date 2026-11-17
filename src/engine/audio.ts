@@ -1096,19 +1096,58 @@ class SoundEngine {
     });
   }
 
-  public playVehicleHorn(kind: 'rickshaw' | 'bike' | 'car' = 'car'): void {
+  public playCarHorn(
+    kind:
+      | 'rickshaw'
+      | 'bike'
+      | 'car'
+      | 'sedan'
+      | 'muscle'
+      | 'police'
+      | 'swat_van'
+      | 'army_truck'
+      | 'armored_apc'
+      | 'chopper' = 'car',
+    volumeScale = 1.0,
+  ): void {
     const ctx = this.ensureContext();
-    const vol = this.effectiveSfxGain();
+    const vol = this.effectiveSfxGain() * Math.max(0.05, Math.min(1.1, volumeScale));
     if (!ctx || vol <= 0.01) return;
 
     const now = ctx.currentTime;
+    if (kind === 'chopper') {
+      // Helicopter twin-klaxon warning chirp
+      [0, 0.14].forEach((offset) => {
+        const osc = ctx.createOscillator();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(680, now + offset);
+        osc.frequency.exponentialRampToValueAtTime(510, now + offset + 0.11);
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.001, now + offset);
+        g.gain.linearRampToValueAtTime(0.14 * vol, now + offset + 0.015);
+        g.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.12);
+        osc.connect(g);
+        g.connect(ctx.destination);
+        osc.start(now + offset);
+        osc.stop(now + offset + 0.13);
+      });
+      return;
+    }
+
     const freqs =
       kind === 'rickshaw'
         ? [440, 554] // Classic cheerful auto-rickshaw dual horn
         : kind === 'bike'
-          ? [520] // Crisp single motorcycle horn
-          : [385, 485]; // Rich car dual-tone horn
+          ? [535] // Crisp motorcycle horn
+          : kind === 'swat_van' || kind === 'army_truck' || kind === 'armored_apc'
+            ? [210, 265] // Heavy commercial / tactical air horn
+            : kind === 'police'
+              ? [420, 528] // Crisp Bharat Police cruiser horn
+              : kind === 'muscle'
+                ? [340, 430] // Deep GT dual-tone horn
+                : [385, 485]; // Rich civilian sedan horn
 
+    const dur = kind === 'bike' ? 0.24 : kind === 'swat_van' || kind === 'army_truck' ? 0.42 : 0.34;
     freqs.forEach((f) => {
       const osc = ctx.createOscillator();
       osc.type = kind === 'bike' ? 'sawtooth' : 'triangle';
@@ -1116,14 +1155,41 @@ class SoundEngine {
 
       const g = ctx.createGain();
       g.gain.setValueAtTime(0.001, now);
-      g.gain.linearRampToValueAtTime(0.16 * vol, now + 0.025);
-      g.gain.setValueAtTime(0.16 * vol, now + 0.22);
-      g.gain.exponentialRampToValueAtTime(0.001, now + 0.34);
+      g.gain.linearRampToValueAtTime(0.16 * vol, now + 0.02);
+      g.gain.setValueAtTime(0.15 * vol, now + dur * 0.65);
+      g.gain.exponentialRampToValueAtTime(0.001, now + dur);
 
       osc.connect(g);
       g.connect(ctx.destination);
       osc.start(now);
-      osc.stop(now + 0.36);
+      osc.stop(now + dur + 0.02);
+    });
+  }
+
+  public playVehicleHorn(kind: 'rickshaw' | 'bike' | 'car' = 'car'): void {
+    this.playCarHorn(kind, 1.0);
+  }
+
+  public playMedkitHeal(): void {
+    const ctx = this.ensureContext();
+    const vol = this.effectiveSfxGain();
+    if (!ctx || vol <= 0.01) return;
+    const now = ctx.currentTime;
+    // Warm rising medical recovery chord (C5 -> E5 -> G5 -> C6)
+    const notes = [523.25, 659.25, 783.99, 1046.5];
+    notes.forEach((freq, idx) => {
+      const t = now + idx * 0.065;
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, t);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.001, t);
+      g.gain.linearRampToValueAtTime(0.15 * vol, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.26);
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.28);
     });
   }
 
@@ -1283,12 +1349,17 @@ class SoundEngine {
     const estDurationMs = Math.max(2200, Math.min(16000, cleanText.length * 85));
     this.minSubtitleHoldUntil = performance.now() + Math.min(4500, Math.max(1500, cleanText.length * 55));
 
-    let hasHiVoices = false;
+    let hasUsableSpeechVoice = false;
+    const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       try {
         const live = window.speechSynthesis.getVoices();
         if (live && live.length > 0) this.cachedVoices = live;
-        const allVoices = this.cachedVoices;
+        const rawVoices = this.cachedVoices;
+        // When offline, cloud voices (e.g. Google हिन्दी with localService === false) fail silently;
+        // filter strictly to local OS voices when offline so local Hindi/Indian voices can still speak.
+        const allVoices = isOffline ? rawVoices.filter((v) => v.localService) : rawVoices;
 
         const googleHindi = allVoices.find((v) => /google\s*(हिन्दी|hindi)/i.test(v.name));
         const hemantOrMadhur = allVoices.filter((v) => /microsoft.*(hemant|madhur)/i.test(v.name));
@@ -1299,19 +1370,17 @@ class SoundEngine {
         const enInAll = allVoices.filter(
           (v) => v.lang.toLowerCase() === 'en-in' || v.lang.toLowerCase().includes('in'),
         );
-        hasHiVoices = hiAll.length > 0;
 
         const pickVoice = (): SpeechSynthesisVoice | undefined => {
           if (allVoices.length === 0) return undefined;
-          // Female role (Adv. Meera Sharma / female citizens if seed odd): prefer Kalpana/Swara -> Google Hindi -> hi-IN -> en-IN
+          // Female role (Adv. Meera Sharma / mom): prefer Kalpana/Swara -> Google Hindi -> hi-IN -> en-IN
           if (isFemaleRole) {
             if (kalpanaOrSwara.length > 0) return kalpanaOrSwara[hash % kalpanaOrSwara.length];
             if (googleHindi) return googleHindi;
             if (hiAll.length > 0) return hiAll[hash % hiAll.length];
             if (enInAll.length > 0) return enInAll[hash % enInAll.length];
-            return allVoices[hash % allVoices.length];
+            return undefined;
           }
-          // Priority chain: Google हिन्दी -> Microsoft Hemant / Madhur -> Kalpana / Swara -> hi-IN -> en-IN
           if (googleHindi && (role === 'judge' || role === 'narrator' || role === 'banker' || hash % 2 === 0)) {
             return googleHindi;
           }
@@ -1322,59 +1391,74 @@ class SoundEngine {
           if (kalpanaOrSwara.length > 0) return kalpanaOrSwara[hash % kalpanaOrSwara.length];
           if (hiAll.length > 0) return hiAll[hash % hiAll.length];
           if (enInAll.length > 0) return enInAll[hash % enInAll.length];
-          return allVoices[hash % allVoices.length];
+          return undefined;
         };
 
-        // Cancel cleanly first, then wait 55ms before calling speak() to avoid Chromium mid-sentence drop bug
-        window.speechSynthesis.cancel();
+        const chosenVoice = pickVoice();
+        hasUsableSpeechVoice = Boolean(chosenVoice) || (!isOffline && hiAll.length > 0);
 
-        this.speechTimerId = window.setTimeout(() => {
-          this.speechTimerId = null;
-          if (seq !== this.speechSeq) return;
-          try {
-            const utter = new SpeechSynthesisUtterance(cleanText);
-            const chosenVoice = pickVoice();
-            if (chosenVoice) {
-              utter.voice = chosenVoice;
-              utter.lang = chosenVoice.lang?.toLowerCase().startsWith('hi') ? chosenVoice.lang : 'hi-IN';
-            } else {
-              utter.lang = 'hi-IN';
-            }
-            utter.rate = rate;
-            utter.pitch = pitch;
-            utter.volume = Math.max(0.25, Math.min(1, this.settings.masterVolume));
+        if (!isOffline || chosenVoice) {
+          // Cancel cleanly first, then wait 55ms before calling speak() to avoid Chromium mid-sentence drop bug
+          window.speechSynthesis.cancel();
 
-            const finish = () => {
-              if (seq !== this.speechSeq) return;
-              this.activeSpeaking = false;
-              this.clearSpeechTimers();
-            };
-            utter.onend = finish;
-            utter.onerror = finish;
-
-            // Keep Chromium SpeechSynthesis awake during longer courtroom/cutscene sentences
-            this.keepAliveId = window.setInterval(() => {
-              if (seq !== this.speechSeq) return;
-              try {
-                if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
-                  window.speechSynthesis.resume();
-                } else if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) {
-                  finish();
-                }
-              } catch {
-                // ignore
+          this.speechTimerId = window.setTimeout(() => {
+            this.speechTimerId = null;
+            if (seq !== this.speechSeq) return;
+            try {
+              const utter = new SpeechSynthesisUtterance(cleanText);
+              if (chosenVoice) {
+                utter.voice = chosenVoice;
+                utter.lang = chosenVoice.lang?.toLowerCase().startsWith('hi') ? chosenVoice.lang : 'hi-IN';
+              } else {
+                utter.lang = 'hi-IN';
               }
-            }, 3500);
+              utter.rate = rate;
+              utter.pitch = pitch;
+              utter.volume = Math.max(0.25, Math.min(1, this.settings.masterVolume));
 
-            this.speechMaxTimeoutId = window.setTimeout(finish, estDurationMs);
-            window.speechSynthesis.speak(utter);
-          } catch {
+              const finish = () => {
+                if (seq !== this.speechSeq) return;
+                this.activeSpeaking = false;
+                this.clearSpeechTimers();
+              };
+              utter.onend = finish;
+              utter.onerror = () => {
+                if (seq === this.speechSeq && !this.settings.retroVoiceBlips) {
+                  this.playRetroVoiceBlips(cleanText, blipFreq, blipWave);
+                }
+                finish();
+              };
+
+              // Keep Chromium SpeechSynthesis awake during longer courtroom/cutscene sentences
+              this.keepAliveId = window.setInterval(() => {
+                if (seq !== this.speechSeq) return;
+                try {
+                  if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
+                    window.speechSynthesis.resume();
+                  } else if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) {
+                    finish();
+                  }
+                } catch {
+                  // ignore
+                }
+              }, 3500);
+
+              this.speechMaxTimeoutId = window.setTimeout(finish, estDurationMs);
+              window.speechSynthesis.speak(utter);
+            } catch {
+              if (seq === this.speechSeq) {
+                this.activeSpeaking = false;
+                this.clearSpeechTimers();
+              }
+            }
+          }, 55);
+        } else {
+          this.speechMaxTimeoutId = window.setTimeout(() => {
             if (seq === this.speechSeq) {
               this.activeSpeaking = false;
-              this.clearSpeechTimers();
             }
-          }
-        }, 55);
+          }, Math.min(3500, estDurationMs));
+        }
       } catch {
         this.activeSpeaking = false;
       }
@@ -1390,7 +1474,7 @@ class SoundEngine {
       this.activeSpeaking = false;
     }
 
-    if (this.settings.retroVoiceBlips || !hasHiVoices) {
+    if (this.settings.retroVoiceBlips || !hasUsableSpeechVoice) {
       this.playRetroVoiceBlips(cleanText, blipFreq, blipWave);
     }
   }

@@ -4,8 +4,10 @@ import {
   Crosshair,
   Disc,
   Eye,
+  Gauge,
   HardHat,
   HeartPulse,
+  Lightbulb,
   Map as MapIcon,
   Mic,
   Moon,
@@ -23,15 +25,18 @@ import {
   Sunrise,
   Sunset,
   X,
-  Zap,
 } from 'lucide-react';
 import {
+  DEFAULT_KEYBINDS,
   FloatingToast,
   HudSnapshot,
+  KeybindActionId,
+  KeybindMap,
   MAX_MEDKITS,
   WEAPON_ORDER,
   WEAPONS,
   WeaponId,
+  formatKeyCode,
   formatRs,
   formatRsExact,
 } from '../types/game';
@@ -42,6 +47,9 @@ interface HUDProps {
   hud: HudSnapshot;
   toasts: FloatingToast[];
   showControlsStrip: boolean;
+  isTouchHud?: boolean;
+  voiceMicEnabled?: boolean;
+  keybinds?: KeybindMap;
   onOpenSettings: () => void;
   onOpenShop: () => void;
   onOpenPhone: () => void;
@@ -58,6 +66,7 @@ interface HUDProps {
   onReplyChai: (accept: boolean) => void;
   onStartMicReply: () => void;
   onToggleFirstPerson: () => void;
+  onToggleHeadlights?: () => void;
   onToggleAds: () => void;
   onToggleHelmet: () => void;
   onContextInteract: () => void;
@@ -77,6 +86,9 @@ export const HUD: React.FC<HUDProps> = ({
   hud,
   toasts,
   showControlsStrip,
+  isTouchHud = false,
+  voiceMicEnabled = false,
+  keybinds = DEFAULT_KEYBINDS,
   onOpenSettings,
   onOpenShop,
   onOpenPhone,
@@ -93,6 +105,7 @@ export const HUD: React.FC<HUDProps> = ({
   onReplyChai,
   onStartMicReply,
   onToggleFirstPerson,
+  onToggleHeadlights,
   onToggleAds,
   onToggleHelmet,
   onContextInteract,
@@ -424,10 +437,8 @@ export const HUD: React.FC<HUDProps> = ({
               <span className="font-bold text-white">{hud.timeOfDay.formattedTime}</span>
               <span className="text-white/40">·</span>
               <span className="text-[#FBBF24] font-semibold">{hud.timeOfDay.phaseLabel}</span>
-              <span className="hidden sm:inline text-white/40">·</span>
-              <span className="hidden sm:inline text-slate-100">DAY {hud.timeOfDay.dayCount}</span>
-              <span className="hidden md:inline text-white/40">·</span>
-              <span className="hidden md:inline text-[#38BDF8] font-medium">{hud.bank.calendarDate}</span>
+              <span className="text-white/40">·</span>
+              <span className="text-[#38BDF8] font-medium truncate">{hud.bank.calendarDate}</span>
             </div>
 
             {/* Active GPS Waypoint */}
@@ -529,7 +540,7 @@ export const HUD: React.FC<HUDProps> = ({
                       onClick={onSurrender}
                       className="px-2 py-1 bg-sky-600/85 hover:bg-sky-500 rounded text-white text-[10px] font-mono-num font-bold cursor-pointer"
                     >
-                      [Hold H] Surrender
+                      [Hold {formatKeyCode(keybinds.surrender)}] Surrender
                     </button>
                     {hud.streetBribe?.available && (
                       <button
@@ -537,7 +548,7 @@ export const HUD: React.FC<HUDProps> = ({
                         onClick={onOfferStreetBribe}
                         className="px-2 py-1 bg-[#F59E0B] hover:bg-[#FBBF24] rounded text-[#0E1118] text-[10px] font-mono-num font-bold cursor-pointer"
                       >
-                        [B] Chai-Paani {formatRs(hud.streetBribe.amount)}
+                        [{formatKeyCode(keybinds.shop)}] Chai-Paani {formatRs(hud.streetBribe.amount)}
                       </button>
                     )}
                   </div>
@@ -565,23 +576,29 @@ export const HUD: React.FC<HUDProps> = ({
           <div className="absolute top-[clamp(8px,2vw,16px)] right-[clamp(8px,2vw,16px)] flex flex-col items-end gap-2 max-w-[52vw] sm:max-w-none">
             {/* Desktop Minimal Translucent Pill Action Bar */}
             <div className="hidden sm:flex items-center gap-1 pointer-events-auto flex-wrap justify-end">
-              {!hud.inVehicle && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.currentTarget.blur();
-                    onToggleFirstPerson();
-                  }}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)] ${
-                    hud.firstPerson
-                      ? 'bg-sky-500/75 border border-sky-300/70 text-white backdrop-blur-sm'
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  onToggleFirstPerson();
+                }}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)] ${
+                  hud.cameraMode === 'first_person'
+                    ? 'bg-sky-500/80 border border-sky-300/75 text-white backdrop-blur-sm'
+                    : hud.cameraMode === 'third_close'
+                      ? 'bg-indigo-500/70 border border-indigo-300/70 text-white backdrop-blur-sm'
                       : 'bg-black/25 hover:bg-black/45 border border-white/10 text-slate-100 backdrop-blur-sm'
-                  }`}
-                >
-                  <Eye className="w-3.5 h-3.5" />
-                  <span>{hud.firstPerson ? 'FPV ON (C)' : 'FPV (C)'}</span>
-                </button>
-              )}
+                }`}
+              >
+                <Eye className="w-3.5 h-3.5" />
+                <span>
+                  {hud.cameraMode === 'first_person'
+                    ? `FPV (${formatKeyCode(keybinds.camera)})`
+                    : hud.cameraMode === 'third_close'
+                      ? `3P Close (${formatKeyCode(keybinds.camera)})`
+                      : `3P Far (${formatKeyCode(keybinds.camera)})`}
+                </span>
+              </button>
               {canFirearm && (
                 <button
                   type="button"
@@ -596,7 +613,11 @@ export const HUD: React.FC<HUDProps> = ({
                   }`}
                 >
                   <Crosshair className="w-3.5 h-3.5" />
-                  <span>{hud.adsActive ? 'Scoped (X)' : 'Scope (X)'}</span>
+                  <span>
+                    {hud.adsActive
+                      ? `Scoped (${formatKeyCode(keybinds.scope)})`
+                      : `Scope (${formatKeyCode(keybinds.scope)})`}
+                  </span>
                 </button>
               )}
               {(hud.hasHelmet || hud.currentVehicleKind === 'bike') && (
@@ -613,24 +634,34 @@ export const HUD: React.FC<HUDProps> = ({
                   }`}
                 >
                   <HardHat className="w-3.5 h-3.5" />
-                  <span>{hud.helmetOn ? 'Helmet ON (L)' : 'Helmet (L)'}</span>
+                  <span>
+                    {hud.helmetOn
+                      ? `Helmet ON (${formatKeyCode(keybinds.helmet)})`
+                      : `Helmet (${formatKeyCode(keybinds.helmet)})`}
+                  </span>
                 </button>
               )}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.currentTarget.blur();
-                  onStartMicReply();
-                }}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)] ${
-                  hud.micState.active
-                    ? 'bg-red-500/80 border border-red-300 text-white backdrop-blur-sm'
-                    : 'bg-black/25 hover:bg-black/45 border border-white/10 text-emerald-300 backdrop-blur-sm'
-                }`}
-              >
-                <Mic className="w-3.5 h-3.5" />
-                <span>{hud.micState.active ? 'Mic ON (V)' : 'Mic (V)'}</span>
-              </button>
+              {voiceMicEnabled && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    onStartMicReply();
+                  }}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)] ${
+                    hud.micState.active
+                      ? 'bg-red-500/80 border border-red-300 text-white backdrop-blur-sm'
+                      : 'bg-black/25 hover:bg-black/45 border border-white/10 text-emerald-300 backdrop-blur-sm'
+                  }`}
+                >
+                  <Mic className="w-3.5 h-3.5" />
+                  <span>
+                    {hud.micState.active
+                      ? `Mic ON (${formatKeyCode(keybinds.mic)})`
+                      : `Mic (${formatKeyCode(keybinds.mic)})`}
+                  </span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={(e) => {
@@ -640,7 +671,7 @@ export const HUD: React.FC<HUDProps> = ({
                 className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/45 border border-white/10 text-[#38BDF8] text-[11px] font-semibold backdrop-blur-sm transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]"
               >
                 <MapIcon className="w-3.5 h-3.5" />
-                <span>Map (M)</span>
+                <span>Map ({formatKeyCode(keybinds.map)})</span>
               </button>
               <button
                 type="button"
@@ -651,7 +682,7 @@ export const HUD: React.FC<HUDProps> = ({
                 className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/45 border border-white/10 text-slate-100 text-[11px] font-semibold backdrop-blur-sm transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]"
               >
                 <Disc className="w-3.5 h-3.5 text-[#FBBF24]" />
-                <span>Wheel (Q)</span>
+                <span>Wheel ({formatKeyCode(keybinds.wheel)})</span>
               </button>
               <button
                 type="button"
@@ -662,7 +693,7 @@ export const HUD: React.FC<HUDProps> = ({
                 className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/45 border border-white/10 text-[#38BDF8] text-[11px] font-semibold backdrop-blur-sm transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]"
               >
                 <Smartphone className="w-3.5 h-3.5" />
-                <span>Phone (P)</span>
+                <span>Phone ({formatKeyCode(keybinds.phone)})</span>
               </button>
               <button
                 type="button"
@@ -673,7 +704,7 @@ export const HUD: React.FC<HUDProps> = ({
                 className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/45 border border-white/10 text-[#FBBF24] text-[11px] font-semibold backdrop-blur-sm transition-colors whitespace-nowrap shrink-0 cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]"
               >
                 <ShoppingBag className="w-3.5 h-3.5" />
-                <span>Shastra (B)</span>
+                <span>Shastra ({formatKeyCode(keybinds.shop)})</span>
               </button>
               <button
                 type="button"
@@ -688,42 +719,44 @@ export const HUD: React.FC<HUDProps> = ({
               </button>
             </div>
 
-            {/* Mobile Compact Action Pills */}
-            <div className="flex sm:hidden items-center gap-1 pointer-events-auto">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.currentTarget.blur();
-                  onOpenPhone();
-                }}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/45 border border-white/10 text-[#38BDF8] text-[10px] font-semibold backdrop-blur-sm cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]"
-              >
-                <Smartphone className="w-3 h-3" />
-                <span>PHONE</span>
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.currentTarget.blur();
-                  onOpenShop();
-                }}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/45 border border-white/10 text-[#FBBF24] text-[10px] font-semibold backdrop-blur-sm cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]"
-              >
-                <ShoppingBag className="w-3 h-3" />
-                <span>GUNS</span>
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.currentTarget.blur();
-                  onOpenSettings();
-                }}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/45 border border-white/10 text-slate-100 text-[10px] font-semibold backdrop-blur-sm cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]"
-              >
-                <Settings className="w-3 h-3" />
-                <span>MENU</span>
-              </button>
-            </div>
+            {/* Mobile Compact Action Pills (hidden when Touch HUD renders customizable Phone/Wheel/Settings buttons) */}
+            {!isTouchHud && (
+              <div className="flex sm:hidden items-center gap-1 pointer-events-auto">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    onOpenPhone();
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/45 border border-white/10 text-[#38BDF8] text-[10px] font-semibold backdrop-blur-sm cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]"
+                >
+                  <Smartphone className="w-3 h-3" />
+                  <span>PHONE</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    onOpenShop();
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/45 border border-white/10 text-[#FBBF24] text-[10px] font-semibold backdrop-blur-sm cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]"
+                >
+                  <ShoppingBag className="w-3 h-3" />
+                  <span>GUNS</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    onOpenSettings();
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/45 border border-white/10 text-slate-100 text-[10px] font-semibold backdrop-blur-sm cursor-pointer drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]"
+                >
+                  <Settings className="w-3 h-3" />
+                  <span>MENU</span>
+                </button>
+              </div>
+            )}
 
             {/* Borderless Floating Vitals Cluster (No Outer Card Box) */}
             <div className="w-[clamp(164px,42vw,230px)] flex flex-col items-end gap-1.5">
@@ -826,13 +859,15 @@ export const HUD: React.FC<HUDProps> = ({
                   {WEAPON_ORDER.map((wid, idx) => {
                     const owned = hud.ownedWeapons.includes(wid);
                     const active = hud.activeWeapon === wid;
+                    const slotAction = `weapon${idx + 1}` as KeybindActionId;
+                    const keyLabel = formatKeyCode(keybinds[slotAction]);
                     return (
                       <button
                         key={wid}
                         type="button"
                         disabled={!owned}
                         onClick={() => onSelectWeapon(wid)}
-                        title={`${WEAPONS[wid].name} (${idx + 1})`}
+                        title={`${WEAPONS[wid].name} (${keyLabel})`}
                         className={`h-6 rounded-full text-[10px] font-mono-num backdrop-blur-sm border transition-colors ${
                           active
                             ? 'bg-[#F59E0B] border-amber-200 text-[#0E1118] font-extrabold cursor-pointer shadow'
@@ -841,7 +876,7 @@ export const HUD: React.FC<HUDProps> = ({
                               : 'bg-black/20 border-white/5 text-white/25 cursor-not-allowed'
                         }`}
                       >
-                        {idx + 1}
+                        {keyLabel}
                       </button>
                     );
                   })}
@@ -851,7 +886,7 @@ export const HUD: React.FC<HUDProps> = ({
                   type="button"
                   disabled={hud.medkits <= 0 || hud.hp >= hud.maxHp}
                   onClick={onUseMedkit}
-                  title="Use Medkit (H)"
+                  title={`Use Medkit (${formatKeyCode(keybinds.medkit)})`}
                   className={`flex items-center gap-1 px-2 h-6 rounded-full text-[10px] font-mono-num font-bold backdrop-blur-sm border transition-colors shrink-0 ${
                     hud.medkits > 0 && hud.hp < hud.maxHp
                       ? 'bg-[#22C55E] hover:bg-emerald-400 border-emerald-200 text-[#0E1118] cursor-pointer'
@@ -924,17 +959,127 @@ export const HUD: React.FC<HUDProps> = ({
           </div>
         )}
 
-        {/* Bottom-Left: Tactical Minimap & Vehicle Telemetry */}
+        {/* Bottom-Left: Tactical Minimap & Compact Vehicle Instrument Cluster */}
         {!inCutscene && (
           <div className="absolute bottom-[clamp(8px,2vw,16px)] left-[clamp(8px,2vw,16px)] flex flex-col gap-1.5">
             {hud.inVehicle && (
-              <div className="px-2.5 py-1 hud-glass rounded-lg flex items-center justify-between gap-2 text-[clamp(9px,2vw,11px)] hud-text-shadow">
-                <span className="font-semibold text-slate-100 truncate max-w-[76px] sm:max-w-[116px]">
-                  {hud.vehicleName}
-                </span>
-                <span className="font-mono-num font-bold text-[#FBBF24] whitespace-nowrap">
-                  {hud.vehicleSpeedKmh} KM/H
-                </span>
+              <div className="w-[clamp(144px,34vw,224px)] px-2.5 py-1.5 hud-glass border-amber-400/35 rounded-xl flex flex-col gap-1 hud-text-shadow pointer-events-auto">
+                <div className="flex items-center justify-between gap-1.5">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <Gauge className="w-3.5 h-3.5 text-[#FBBF24] shrink-0" />
+                    <span className="font-semibold text-[clamp(9px,2vw,11px)] text-slate-100 truncate">
+                      {hud.vehicleName}
+                    </span>
+                  </div>
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[9px] font-mono-num font-extrabold shrink-0 ${
+                      hud.vehicleGear === 'R'
+                        ? 'bg-red-500/80 text-white'
+                        : hud.vehicleGear === 'FLY'
+                          ? 'bg-sky-500/80 text-white'
+                          : hud.vehicleGear === 'P'
+                            ? 'bg-slate-700 text-slate-200'
+                            : 'bg-emerald-500/80 text-slate-950'
+                    }`}
+                  >
+                    {hud.vehicleGear}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between gap-2">
+                  {/* Live Analog Speedometer Arc */}
+                  <div className="flex items-center gap-1.5">
+                    <svg viewBox="0 0 64 38" className="w-11 h-7 shrink-0 overflow-visible">
+                      <path
+                        d="M 8 32 A 24 24 0 0 1 56 32"
+                        fill="none"
+                        stroke="rgba(255,255,255,0.16)"
+                        strokeWidth="4.5"
+                        strokeLinecap="round"
+                      />
+                      <path
+                        d="M 8 32 A 24 24 0 0 1 56 32"
+                        fill="none"
+                        stroke={hud.vehicleSpeedKmh > 120 ? '#EF4444' : '#FBBF24'}
+                        strokeWidth="4.5"
+                        strokeLinecap="round"
+                        strokeDasharray="75.4"
+                        strokeDashoffset={
+                          75.4 * (1 - Math.min(1, hud.vehicleSpeedKmh / (hud.currentVehicleKind === 'chopper' ? 180 : 160)))
+                        }
+                      />
+                      <g
+                        transform={`translate(32, 32) rotate(${
+                          -90 + Math.min(180, (hud.vehicleSpeedKmh / (hud.currentVehicleKind === 'chopper' ? 180 : 160)) * 180)
+                        })`}
+                      >
+                        <line x1="0" y1="0" x2="0" y2="-19" stroke="#38BDF8" strokeWidth="2.2" strokeLinecap="round" />
+                        <circle cx="0" cy="0" r="3" fill="#FBBF24" />
+                      </g>
+                    </svg>
+                    <div className="flex flex-col leading-none">
+                      <span className="font-mono-num font-extrabold text-[clamp(12px,2.8vw,16px)] text-[#FBBF24]">
+                        {hud.vehicleSpeedKmh}
+                      </span>
+                      <span className="text-[8px] font-mono-num text-slate-300">KM/H</span>
+                    </div>
+                  </div>
+
+                  {/* Animated Steering Wheel + Headlights + Altitude */}
+                  <div className="flex items-center gap-1.5">
+                    <div
+                      title="Steering Angle"
+                      className="w-6 h-6 rounded-full border border-white/20 bg-black/40 flex items-center justify-center shrink-0"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        style={{ transform: `rotate(${Math.round(hud.vehicleSteer * 55)}deg)` }}
+                        className="w-4 h-4 text-slate-200 transition-transform duration-75"
+                      >
+                        <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="2.2" />
+                        <line x1="3" y1="12" x2="21" y2="12" stroke="currentColor" strokeWidth="2" />
+                        <line x1="12" y1="12" x2="12" y2="21" stroke="currentColor" strokeWidth="2" />
+                        <circle cx="12" cy="12" r="2" fill="#FBBF24" />
+                      </svg>
+                    </div>
+                    {onToggleHeadlights && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.currentTarget.blur();
+                          onToggleHeadlights();
+                        }}
+                        title="Toggle Headlights"
+                        className={`px-1.5 py-1 rounded-md border text-[9px] font-mono-num font-bold flex items-center gap-0.5 cursor-pointer transition-colors ${
+                          hud.vehicleHeadlightsOn
+                            ? 'bg-amber-400/85 border-amber-200 text-slate-950'
+                            : 'bg-black/40 border-white/15 text-slate-300 hover:bg-white/10'
+                        }`}
+                      >
+                        <Lightbulb className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Fuel Gauge & Chopper Altitude Row */}
+                <div className="flex items-center gap-2 text-[9px] font-mono-num">
+                  <span className="text-slate-300 shrink-0">FUEL</span>
+                  <div className="flex-1 h-1.5 bg-black/50 rounded-full overflow-hidden border border-white/10">
+                    <div
+                      className={`h-full rounded-full transition-all duration-200 ${
+                        hud.vehicleFuelPct > 25 ? 'bg-emerald-400' : 'bg-red-500'
+                      }`}
+                      style={{ width: `${Math.max(4, Math.min(100, hud.vehicleFuelPct))}%` }}
+                    />
+                  </div>
+                  <span className="text-slate-200 font-bold w-7 text-right">{Math.round(hud.vehicleFuelPct)}%</span>
+                  {hud.currentVehicleKind === 'chopper' && (
+                    <span className="px-1 py-0.5 rounded bg-sky-500/30 border border-sky-400/50 text-sky-200 font-bold">
+                      ALT {hud.vehicleAltitudeM}m
+                    </span>
+                  )}
+                </div>
               </div>
             )}
             <Minimap
@@ -990,7 +1135,7 @@ export const HUD: React.FC<HUDProps> = ({
                     onClick={onStartMicReply}
                     className="px-2 py-1 bg-white/15 hover:bg-white/25 rounded text-[10px] font-mono-num font-bold cursor-pointer"
                   >
-                    STOP (V)
+                    STOP ({formatKeyCode(keybinds.mic)})
                   </button>
                 )}
               </div>
@@ -1003,18 +1148,24 @@ export const HUD: React.FC<HUDProps> = ({
                     <Coffee className="w-4 h-4" />
                     <span>{hud.chaiPrompt.npcName}</span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={onStartMicReply}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono-num font-bold cursor-pointer transition-colors ${
-                      hud.chaiPrompt.micListening || hud.micState.active
-                        ? 'bg-[#EF4444] text-white'
-                        : 'bg-white/10 hover:bg-white/20 text-[#38BDF8]'
-                    }`}
-                  >
-                    <Mic className="w-3.5 h-3.5" />
-                    <span>{hud.chaiPrompt.micListening || hud.micState.active ? 'Listening... (V)' : '[V] Mic Reply'}</span>
-                  </button>
+                  {voiceMicEnabled && (
+                    <button
+                      type="button"
+                      onClick={onStartMicReply}
+                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono-num font-bold cursor-pointer transition-colors ${
+                        hud.chaiPrompt.micListening || hud.micState.active
+                          ? 'bg-[#EF4444] text-white'
+                          : 'bg-white/10 hover:bg-white/20 text-[#38BDF8]'
+                      }`}
+                    >
+                      <Mic className="w-3.5 h-3.5" />
+                      <span>
+                        {hud.chaiPrompt.micListening || hud.micState.active
+                          ? `Listening... (${formatKeyCode(keybinds.mic)})`
+                          : `[${formatKeyCode(keybinds.mic)}] Mic Reply`}
+                      </span>
+                    </button>
+                  )}
                 </div>
                 <div className="text-sm font-semibold text-white">
                   &ldquo;{hud.chaiPrompt.line}&rdquo;
@@ -1093,7 +1244,7 @@ export const HUD: React.FC<HUDProps> = ({
                     >
                       <ShieldCheck className="w-3.5 h-3.5" />
                       <span>
-                        [E] {hud.policeInspection.hasGunLicense ? 'Show License & Holster' : 'Admit No License'}
+                        [{formatKeyCode(keybinds.interact)}] {hud.policeInspection.hasGunLicense ? 'Show License & Holster' : 'Admit No License'}
                       </span>
                     </button>
                     <button
@@ -1101,7 +1252,7 @@ export const HUD: React.FC<HUDProps> = ({
                       onClick={() => onRespondLicenseCheck(false)}
                       className="px-3 py-2 bg-[#EF4444]/85 hover:bg-[#EF4444] rounded-lg text-white text-xs font-mono-num font-bold cursor-pointer transition-colors"
                     >
-                      [R] Refuse / Resist
+                      [{formatKeyCode(keybinds.radio)}] Refuse / Resist
                     </button>
                   </div>
                 )}
@@ -1121,11 +1272,68 @@ export const HUD: React.FC<HUDProps> = ({
               </button>
             )}
 
+            {/* Desktop FPV Cockpit Dashboard Strip when driving/flying in First-Person View */}
+            {!isTouchHud && hud.inVehicle && hud.cameraMode === 'first_person' && (
+              <div className="hidden sm:flex items-center gap-4 px-4 py-2 hud-glass border-amber-400/45 rounded-2xl shadow-2xl pointer-events-auto hud-text-shadow">
+                <div className="flex flex-col items-center">
+                  <span className="text-[9px] font-mono-num text-slate-400 uppercase">SPEED</span>
+                  <span className="text-lg font-mono-num font-extrabold text-[#FBBF24] leading-none">
+                    {hud.vehicleSpeedKmh}
+                    <span className="text-[10px] font-normal text-slate-300 ml-0.5">km/h</span>
+                  </span>
+                </div>
+                <div className="h-7 w-px bg-white/15" />
+                <div className="flex flex-col items-center">
+                  <span className="text-[9px] font-mono-num text-slate-400 uppercase">GEAR</span>
+                  <span className="text-sm font-mono-num font-extrabold text-emerald-300 leading-none">
+                    {hud.vehicleGear}
+                  </span>
+                </div>
+                <div className="h-7 w-px bg-white/15" />
+                <div className="flex items-center gap-2">
+                  <svg
+                    viewBox="0 0 24 24"
+                    style={{ transform: `rotate(${Math.round(hud.vehicleSteer * 58)}deg)` }}
+                    className="w-6 h-6 text-slate-100 transition-transform duration-75"
+                  >
+                    <circle cx="12" cy="12" r="9.5" fill="none" stroke="currentColor" strokeWidth="2.2" />
+                    <line x1="3" y1="12" x2="21" y2="12" stroke="currentColor" strokeWidth="2" />
+                    <line x1="12" y1="12" x2="12" y2="21.5" stroke="currentColor" strokeWidth="2" />
+                    <circle cx="12" cy="12" r="2.2" fill="#FBBF24" />
+                  </svg>
+                  <div className="flex flex-col text-[10px] font-mono-num leading-tight">
+                    <span className="text-slate-300">FUEL {Math.round(hud.vehicleFuelPct)}%</span>
+                    {hud.currentVehicleKind === 'chopper' ? (
+                      <span className="text-sky-300 font-bold">
+                        ALT {hud.vehicleAltitudeM}m ({formatKeyCode(keybinds.jump)}/{formatKeyCode(keybinds.sprint)})
+                      </span>
+                    ) : (
+                      <span className="text-amber-200/90">
+                        {formatKeyCode(keybinds.horn)} Horn · {formatKeyCode(keybinds.camera)} Cam
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {onToggleHeadlights && (
+                  <button
+                    type="button"
+                    onClick={onToggleHeadlights}
+                    className={`px-2 py-1 rounded-lg border text-[10px] font-mono-num font-bold flex items-center gap-1 cursor-pointer ${
+                      hud.vehicleHeadlightsOn
+                        ? 'bg-amber-400 border-amber-200 text-slate-950'
+                        : 'bg-white/10 border-white/15 text-slate-200'
+                    }`}
+                  >
+                    <Lightbulb className="w-3.5 h-3.5" />
+                    <span>{hud.vehicleHeadlightsOn ? 'LIGHTS ON' : 'LIGHTS'}</span>
+                  </button>
+                )}
+              </div>
+            )}
+
             {showControlsStrip && !hasMoved && (
               <div className="hidden sm:block px-3 py-1 bg-black/35 backdrop-blur-sm border border-white/10 rounded-full text-[10px] font-mono-num text-slate-200/90 whitespace-nowrap drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
-                {hud.pointerLocked
-                  ? 'L Helmet · C FPV · X/RMB Scope · E Interact · M Map · V Mic · Q Wheel · F Vehicle'
-                  : 'Click Look · WASD Move · L Helmet · C FPV · X Scope · E Action · M Map · Q Wheel · F Car'}
+                {`${formatKeyCode(keybinds.moveForward)}${formatKeyCode(keybinds.moveLeft)}${formatKeyCode(keybinds.moveBackward)}${formatKeyCode(keybinds.moveRight)} Move · ${formatKeyCode(keybinds.camera)} Cam · ${formatKeyCode(keybinds.horn)} Horn · ${formatKeyCode(keybinds.helmet)} Helmet · ${formatKeyCode(keybinds.medkit)} Medkit · ${formatKeyCode(keybinds.interact)} Action · ${formatKeyCode(keybinds.map)} Map · ${formatKeyCode(keybinds.phone)} Phone · ${formatKeyCode(keybinds.vehicle)} Vehicle`}
               </div>
             )}
           </div>

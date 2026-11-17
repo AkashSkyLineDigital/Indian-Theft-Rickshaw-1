@@ -120,12 +120,23 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
       ctx.restore();
     }
 
-    // Active Custom/Preset GPS Waypoint Polyline (Amber dashed)
+    // Active Custom/Preset GPS Waypoint Polyline (Glowing Amber Halo + Dashed Core)
     if (waypoint?.active && waypoint.routePoints.length >= 2) {
       ctx.save();
-      ctx.strokeStyle = '#fbbf24';
-      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(251, 191, 36, 0.30)';
+      ctx.lineWidth = 6.5;
       ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      waypoint.routePoints.forEach((pt, idx) => {
+        const [rx, ry] = toCanvas(pt.x, pt.z);
+        if (idx === 0) ctx.moveTo(rx, ry);
+        else ctx.lineTo(rx, ry);
+      });
+      ctx.stroke();
+
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 2.6;
       ctx.setLineDash([5, 3]);
       ctx.beginPath();
       waypoint.routePoints.forEach((pt, idx) => {
@@ -339,17 +350,23 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
       }
     }
 
-    // Waypoint destination marker (clamped to radar edge if distant)
+    // Waypoint destination marker (clamped to radar edge with glow ring if distant)
     if (waypoint?.active) {
       const [wxRaw, wyRaw] = toCanvas(waypoint.x, waypoint.z);
-      const wx = Math.max(9, Math.min(size - 9, wxRaw));
-      const wy = Math.max(9, Math.min(size - 9, wyRaw));
+      const wx = Math.max(10, Math.min(size - 10, wxRaw));
+      const wy = Math.max(10, Math.min(size - 10, wyRaw));
       ctx.save();
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.arc(wx, wy, 7.5, 0, Math.PI * 2);
+      ctx.stroke();
+
       ctx.fillStyle = '#fbbf24';
       ctx.strokeStyle = '#0b0e14';
       ctx.lineWidth = 1.6;
       ctx.beginPath();
-      ctx.arc(wx, wy, 4.5, 0, Math.PI * 2);
+      ctx.arc(wx, wy, 4.4, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
       ctx.restore();
@@ -388,7 +405,7 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
       type="button"
       onClick={onExpand}
       title="Open Full City Map (M)"
-      className="relative w-[clamp(96px,22vw,168px)] h-[clamp(96px,22vw,168px)] rounded-xl bg-[rgba(14,17,24,0.65)] border border-white/[0.16] hover:border-amber-400/70 shadow-xl overflow-hidden pointer-events-auto cursor-pointer text-left block transition-colors"
+      className="relative w-[clamp(74px,min(22vw,24vh),156px)] h-[clamp(74px,min(22vw,24vh),156px)] rounded-xl bg-[rgba(14,17,24,0.65)] border border-white/[0.16] hover:border-amber-400/70 shadow-xl overflow-hidden pointer-events-auto cursor-pointer text-left block transition-colors"
     >
       <canvas ref={canvasRef} width={176} height={176} className="block w-full h-full opacity-95" />
       <div className="absolute top-1 left-1/2 -translate-x-1/2 px-1.5 rounded bg-black/50 text-[clamp(8px,1.6vw,10px)] font-display font-bold tracking-wider text-[#FBBF24] hud-text-shadow">

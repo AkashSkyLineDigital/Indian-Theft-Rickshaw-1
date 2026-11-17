@@ -8,7 +8,9 @@ import {
   BRIBE_PRICE_INR,
   BankAccountHudState,
   CHOWK_ROUNDABOUTS,
+  CITY_ROAD_CENTERS,
   COURT_BAIL_FEE_INR,
+  CameraViewMode,
   CourtroomDialogueTurn,
   CourtroomState,
   CourtroomVerdictKind,
@@ -19,6 +21,7 @@ import {
   DEFAULT_SETTINGS,
   DRIVING_LICENSE_FEE_INR,
   DamagedNpcHud,
+  DensityLevel,
   FD_ANNUAL_RATE,
   FloatingToast,
   GUN_LICENSE_FEE_INR,
@@ -33,6 +36,7 @@ import {
   JailHudState,
   JailRivalInfo,
   JailSchedulePhase,
+  KeybindActionId,
   LAWYER_FEE_1_2_INR,
   LAWYER_FEE_3_INR,
   LicenseRevokedPromptHud,
@@ -187,6 +191,7 @@ interface VehicleEntity {
   kind: VehicleKind;
   rig: VehicleRig;
   x: number;
+  y?: number;
   z: number;
   yaw: number;
   speed: number;
@@ -204,6 +209,8 @@ interface VehicleEntity {
   hasAiRider?: boolean;
   playerClaimed?: boolean;
   isStarterParked?: boolean;
+  isDynamicTraffic?: boolean;
+  aiHornCooldown?: number;
   origX: number;
   origZ: number;
   origYaw: number;
@@ -564,11 +571,17 @@ export class GameEngine {
   private playerYaw = 0;
   private camYaw = 0;
   private camPitch = 0.34;
+  private cameraMode: CameraViewMode = 'third_far';
   private firstPerson = false;
   private adsActive = false;
   private currentFov = 62;
   private targetInCrosshair = false;
   private fpWeaponGroup: THREE.Group | null = null;
+  private vehicleSteerVisual = 0;
+  private vehicleHeadlightsOn = true;
+  private vehicleFuelMap = new Map<number, number>();
+  private chopperAscendTouch = false;
+  private chopperDescendTouch = false;
   private playerHp = 100;
   private playerMaxHp = 100;
   private playerArmor = 0;
@@ -668,6 +681,7 @@ export class GameEngine {
   private touchMoveX = 0;
   private touchMoveY = 0;
   private touchSprint = false;
+  private touchAttackHeld = false;
 
   // Courtroom & Central Jail Interactive State
   private courtroomState: CourtroomState | null = null;
@@ -1177,10 +1191,7 @@ export class GameEngine {
     this.scene.add(this.playerRig.root);
     this.refreshPlayerWeaponMesh();
 
-    // Spawn 26 civilian & street enforcer NPCs across central chowks and outer residential colonies
-    for (let i = 0; i < 26; i++) {
-      this.spawnNpc(i >= 21);
-    }
+    // Spawn dedicated Hindu Pandits, Temple Devotees, Mosque Imam & Mosque Visitors below, and dynamic NPCs via rebalanceAmbientPopulation()
 
     // Spawn dedicated Hindu Pandits, Temple Devotees, Mosque Imam & Mosque Visitors
     this.spawnSacredAndLandmarkNpcs();
@@ -1520,6 +1531,9 @@ export class GameEngine {
 
     // Station standing Traffic Police at major intersections + 2 walking Beat Policemen
     this.spawnStandingTrafficPolice();
+
+    // Scale civilian NPCs & dynamic AI traffic vehicles to configured density
+    this.rebalanceAmbientPopulation();
 
     if (!this.isSoftwareGl) {
       try {
@@ -2054,8 +2068,21 @@ export class GameEngine {
     this.renderer.setSize(w, h);
   };
 
+  private isActionKeyHeld(action: KeybindActionId): boolean {
+    const bound = this.settings.keybinds[action];
+    if (this.keys.has(bound)) return true;
+    // Standard secondary bindings so Arrow keys always remain intuitive for movement alongside custom keybinds
+    if (action === 'moveForward' && this.keys.has('ArrowUp')) return true;
+    if (action === 'moveBackward' && this.keys.has('ArrowDown')) return true;
+    if (action === 'moveLeft' && this.keys.has('ArrowLeft')) return true;
+    if (action === 'moveRight' && this.keys.has('ArrowRight')) return true;
+    if (action === 'sprint' && bound === 'ShiftLeft' && this.keys.has('ShiftRight')) return true;
+    return false;
+  }
+
   private handleKeyDown = (e: KeyboardEvent): void => {
     const code = e.code;
+    const kb = this.settings.keybinds;
     // Ignore typing in input fields (like Cheat Terminal)
     if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
       return;
@@ -2098,15 +2125,17 @@ export class GameEngine {
     if (this.mode === 'JAIL') {
       this.keys.add(code);
       soundEngine.unlock();
-      if (code === 'KeyE') {
+      if (code === kb.interact) {
         this.triggerContextAction();
-      } else if (code === 'KeyC') {
+      } else if (code === kb.camera) {
         this.toggleFirstPerson();
-      } else if (code === 'Digit1') {
+      } else if (code === kb.medkit) {
+        this.useMedkit();
+      } else if (code === kb.jail1) {
         this.jailSleepNight();
-      } else if (code === 'Digit2') {
+      } else if (code === kb.jail2) {
         this.jailPerformWork();
-      } else if (code === 'Digit3') {
+      } else if (code === kb.jail3) {
         if (this.jailState) {
           const cost = this.jailState.wardenBribeCost;
           this.syncBankInterest(true);
@@ -2120,15 +2149,15 @@ export class GameEngine {
             });
           }
         }
-      } else if (code === 'Digit4') {
+      } else if (code === kb.jail4) {
         this.jailStartPrisonBreak();
-      } else if (code === 'Digit5') {
+      } else if (code === kb.jail5) {
         this.jailTriggerInmateDistraction();
-      } else if (code === 'Digit6' || code === 'KeyB') {
+      } else if (code === kb.jail6 || code === kb.shop) {
         this.jailBribeRival();
-      } else if (code === 'KeyJ' || code === 'Enter') {
+      } else if (code === kb.attack || code === 'Enter') {
         this.tryPlayerAttack();
-      } else if (code === 'Space') {
+      } else if (code === kb.jump) {
         e.preventDefault();
         this.triggerJump();
       }
@@ -2140,7 +2169,7 @@ export class GameEngine {
     this.keys.add(code);
     soundEngine.unlock();
 
-    if (code === 'KeyM') {
+    if (code === kb.map) {
       this.releasePointerLock();
       this.callbacks.onToggleMap();
       return;
@@ -2152,22 +2181,22 @@ export class GameEngine {
       return;
     }
 
-    if (code === 'KeyC') {
+    if (code === kb.camera) {
       this.toggleFirstPerson();
       return;
     }
 
-    if (code === 'KeyX') {
+    if (code === kb.scope) {
       this.toggleAds();
       return;
     }
 
-    if (code === 'KeyV') {
+    if (code === kb.mic) {
       this.toggleOrStartMic();
       return;
     }
 
-    if (code === 'KeyQ') {
+    if (code === kb.wheel) {
       if (!this.weaponWheelOpen) {
         this.weaponWheelOpen = true;
         this.adsActive = false;
@@ -2190,25 +2219,27 @@ export class GameEngine {
     }
 
     if (this.policeInspection && this.policeInspection.phase === 'ASKING') {
-      if (code === 'KeyE') {
+      if (code === kb.interact) {
         this.respondToLicenseCheck(true);
         return;
       }
-      if (code === 'KeyR') {
+      if (code === kb.radio) {
         this.respondToLicenseCheck(false);
         return;
       }
     }
 
-    if (code === 'KeyR') {
+    if (code === kb.radio) {
       this.triggerRadioChatter();
-    } else if (code === 'KeyG' && this.currentVehicle) {
+    } else if (code === kb.horn && this.currentVehicle) {
       this.triggerVehicleHorn();
-    } else if (code === 'KeyF') {
+    } else if (code === kb.vehicle) {
       this.toggleVehicle();
-    } else if (code === 'KeyL') {
+    } else if (code === kb.helmet) {
       this.toggleHelmet();
-    } else if (code === 'KeyH') {
+    } else if (code === kb.medkit) {
+      this.useMedkit();
+    } else if (code === kb.surrender) {
       if (this.wantedLevel >= 1 && this.missionPhase === 'NONE') {
         if (!e.repeat) {
           this.surrenderHolding = true;
@@ -2216,29 +2247,30 @@ export class GameEngine {
       } else {
         this.useMedkit();
       }
-    } else if (code === 'KeyE') {
+    } else if (code === kb.interact) {
       this.triggerContextAction();
-    } else if (code === 'Digit1') {
+    } else if (code === kb.weapon1) {
       this.equipWeapon('fists');
-    } else if (code === 'Digit2') {
+    } else if (code === kb.weapon2) {
       this.equipWeapon('pistol');
-    } else if (code === 'Digit3') {
+    } else if (code === kb.weapon3) {
       this.equipWeapon('smg');
-    } else if (code === 'Digit4') {
+    } else if (code === kb.weapon4) {
       this.equipWeapon('shotgun');
-    } else if (code === 'Digit5') {
+    } else if (code === kb.weapon5) {
       this.equipWeapon('rifle');
-    } else if (code === 'Space' && !this.currentVehicle) {
+    } else if (code === kb.jump && !this.currentVehicle) {
       e.preventDefault();
       this.triggerJump();
-    } else if ((code === 'KeyJ' || code === 'Enter') && !this.currentVehicle) {
+    } else if ((code === kb.attack || code === 'Enter') && !this.currentVehicle) {
       this.tryPlayerAttack();
     }
   };
 
   private handleKeyUp = (e: KeyboardEvent): void => {
     this.keys.delete(e.code);
-    if (e.code === 'KeyH' && this.surrenderHolding) {
+    const kb = this.settings.keybinds;
+    if (e.code === kb.surrender && this.surrenderHolding) {
       const quickTap = this.surrenderHoldTimer < 0.28;
       this.surrenderHolding = false;
       this.surrenderHoldTimer = 0;
@@ -2246,7 +2278,7 @@ export class GameEngine {
         this.useMedkit();
       }
     }
-    if (e.code === 'KeyQ' && this.weaponWheelOpen) {
+    if (e.code === kb.wheel && this.weaponWheelOpen) {
       this.weaponWheelOpen = false;
       this.callbacks.onWeaponWheelChange(false);
     }
@@ -2526,19 +2558,76 @@ export class GameEngine {
     this.camPitch = clamp(this.camPitch + dy * sens * 0.75, minP, maxP);
   }
 
+  private syncVehicleFirstPersonVisibility(): void {
+    const v = this.currentVehicle;
+    if (!v) return;
+    const isFpv = this.cameraMode === 'first_person';
+    if (v.rig.cabinMesh) {
+      v.rig.cabinMesh.visible = !isFpv;
+    }
+    if (v.rig.cockpitGroup) {
+      v.rig.cockpitGroup.visible = isFpv || v.kind === 'rickshaw' || v.kind === 'chopper';
+    }
+    if (v.rig.cabinGlassMat) {
+      v.rig.cabinGlassMat.opacity = isFpv ? 0.14 : 0.34;
+    }
+    if (v.kind === 'bike') {
+      this.playerRig.root.visible = !isFpv;
+    }
+  }
+
   public toggleFirstPerson(): void {
     if (this.mode !== 'PLAYING' && this.mode !== 'JAIL') return;
-    this.firstPerson = !this.firstPerson;
-    this.camPitch = this.firstPerson ? clamp(this.camPitch - 0.28, -0.45, 0.45) : clamp(this.camPitch + 0.25, 0.16, 0.85);
+    const prevFp = this.firstPerson;
+    this.cameraMode =
+      this.cameraMode === 'third_far'
+        ? 'third_close'
+        : this.cameraMode === 'third_close'
+          ? 'first_person'
+          : 'third_far';
+    this.firstPerson = this.cameraMode === 'first_person';
+    if (this.firstPerson && !prevFp) {
+      this.camPitch = clamp(this.camPitch - 0.28, -0.45, 0.45);
+      if (this.currentVehicle) {
+        this.camYaw = this.currentVehicle.yaw;
+      }
+    } else if (!this.firstPerson && prevFp) {
+      this.camPitch = clamp(this.camPitch + 0.25, 0.16, 0.85);
+    }
     this.playerRig.root.visible = !this.currentVehicle && !this.firstPerson;
+    this.syncVehicleFirstPersonVisibility();
     this.refreshPlayerWeaponMesh();
     this.syncCanvasCursor();
     soundEngine.playUiClick();
+    const keyLabel = this.settings.keybinds.camera.replace('Key', '');
     this.callbacks.onToast({
-      text: this.firstPerson ? 'First-Person View ON (Press C for 3rd Person)' : 'Third-Person View ON',
+      text:
+        this.cameraMode === 'third_close'
+          ? '3rd-Person Close View'
+          : this.cameraMode === 'first_person'
+            ? this.currentVehicle
+              ? `1st-Person Cockpit View (${keyLabel} to cycle)`
+              : `1st-Person View ON (${keyLabel} to cycle)`
+            : '3rd-Person Far View',
       tone: 'info',
     });
     this.emitHudSnapshot();
+  }
+
+  public toggleVehicleHeadlights(): void {
+    if (this.mode !== 'PLAYING' || !this.currentVehicle) return;
+    this.vehicleHeadlightsOn = !this.vehicleHeadlightsOn;
+    soundEngine.playUiClick();
+    this.callbacks.onToast({
+      text: this.vehicleHeadlightsOn ? 'Headlights ON' : 'Headlights OFF',
+      tone: 'info',
+    });
+    this.emitHudSnapshot();
+  }
+
+  public setChopperAltitudeInput(ascend: boolean, descend: boolean): void {
+    this.chopperAscendTouch = ascend;
+    this.chopperDescendTouch = descend;
   }
 
   public toggleAds(): void {
@@ -2562,6 +2651,14 @@ export class GameEngine {
     this.tryPlayerAttack();
   }
 
+  public setTouchAttackHeld(held: boolean): void {
+    this.touchAttackHeld = held;
+    if (held) {
+      soundEngine.unlock();
+      this.tryPlayerAttack();
+    }
+  }
+
   public triggerJump(): void {
     const groundY = this.mode === 'JAIL' ? 0.24 : 0;
     if ((this.mode !== 'PLAYING' && this.mode !== 'JAIL') || this.currentVehicle || this.playerY > groundY + 0.05) {
@@ -2580,19 +2677,26 @@ export class GameEngine {
   public triggerVehicleHorn(): void {
     if (this.mode !== 'PLAYING' || !this.currentVehicle) return;
     soundEngine.unlock();
-    const kind =
-      this.currentVehicle.kind === 'rickshaw'
-        ? 'rickshaw'
-        : this.currentVehicle.kind === 'bike'
-          ? 'bike'
-          : 'car';
-    soundEngine.playVehicleHorn(kind);
+    soundEngine.playCarHorn(this.currentVehicle.kind, 1.0);
     // Nearby calm pedestrians briefly glance or step clear
     for (const npc of this.npcs) {
       if (npc.dead || npc.isPolice || npc.landmarkKind) continue;
       const d = Math.hypot(npc.x - this.playerX, npc.z - this.playerZ);
-      if (d < 8.5) {
+      if (d < 9.5) {
         npc.targetYaw = Math.atan2(-(npc.x - this.playerX), -(npc.z - this.playerZ));
+      }
+    }
+    // Nearby AI traffic responds with brief horn blasts
+    for (const other of this.vehicles) {
+      if (other.id === this.currentVehicle.id || other.destroyed || other.occupiedByPlayer || other.aiDisabled) continue;
+      const d = Math.hypot(other.x - this.playerX, other.z - this.playerZ);
+      if (d < 22 && (!other.aiHornCooldown || other.aiHornCooldown <= 0) && Math.random() < 0.45) {
+        other.aiHornCooldown = 2.6 + Math.random() * 2.5;
+        window.setTimeout(() => {
+          if (!this.disposed && !other.destroyed) {
+            soundEngine.playCarHorn(other.kind, clamp(1 - d / 36, 0.14, 0.62));
+          }
+        }, 180 + Math.random() * 260);
       }
     }
   }
@@ -2610,6 +2714,7 @@ export class GameEngine {
     if (open) {
       this.adsActive = false;
       this.mouseDownLeft = false;
+      this.touchAttackHeld = false;
     }
     this.callbacks.onWeaponWheelChange(open);
   }
@@ -2732,13 +2837,14 @@ export class GameEngine {
       elapsed -= 1.0;
 
       const settledDay = Math.floor(this.lastCompoundDay) + 1;
+      const settledDate = formatInGameDate(settledDay);
       if (savDayInt >= 0.01) {
         this.recordPassbook(
           'SAVINGS',
           'INTEREST',
           savDayInt,
           this.savingsPrincipal + this.savingsInterest,
-          `Day ${settledDay} Daily Interest (2.5% ÷ 365)`,
+          `${settledDate} Savings Interest (2.5% ÷ 365)`,
         );
       }
       if (fdDayInt >= 0.01) {
@@ -2747,12 +2853,12 @@ export class GameEngine {
           'INTEREST',
           fdDayInt,
           this.fdPrincipal + this.fdInterest,
-          `Day ${settledDay} FD Interest (4.0% ÷ 365)`,
+          `${settledDate} FD Interest (4.0% ÷ 365)`,
         );
       }
     }
 
-    // Pro-rate remaining fractional day cleanly right before any deposit/withdrawal
+    // Pro-rate remaining fractional day cleanly right before any deposit/withdrawal/sleep/skip
     if (settleFraction && elapsed > 0.0001) {
       const savBase = this.savingsPrincipal + this.savingsInterest;
       const fdBase = this.fdPrincipal + this.fdInterest;
@@ -2765,6 +2871,25 @@ export class GameEngine {
       if (fdFracInt > 0) {
         this.fdInterest += fdFracInt;
         this.totalInterestEarned += fdFracInt;
+      }
+      const curDate = formatInGameDate(this.dayCount);
+      if (savFracInt >= 0.01) {
+        this.recordPassbook(
+          'SAVINGS',
+          'INTEREST',
+          savFracInt,
+          this.savingsPrincipal + this.savingsInterest,
+          `${curDate} Settled Savings Interest`,
+        );
+      }
+      if (fdFracInt >= 0.01) {
+        this.recordPassbook(
+          'FD',
+          'INTEREST',
+          fdFracInt,
+          this.fdPrincipal + this.fdInterest,
+          `${curDate} Settled FD Interest (4.0% p.a.)`,
+        );
       }
       this.lastCompoundDay = nowDays;
     }
@@ -3640,6 +3765,8 @@ export class GameEngine {
     this.hasMousePos = false;
     this.touchMoveX = 0;
     this.touchMoveY = 0;
+    this.touchSprint = false;
+    this.touchAttackHeld = false;
     this.surrenderHolding = false;
     this.surrenderHoldTimer = 0;
     if (next !== 'PLAYING' && next !== 'JAIL') {
@@ -3682,12 +3809,183 @@ export class GameEngine {
   }
 
   public updateSettings(next: GameSettings): void {
-    this.settings = { ...next };
+    this.settings = { ...next, keybinds: { ...next.keybinds } };
     soundEngine.updateSettings(this.settings);
     const shadows = !this.isSoftwareGl && this.settings.shadowsEnabled;
     this.renderer.shadowMap.enabled = shadows;
     this.sunLight.castShadow = shadows;
     this.renderer.shadowMap.needsUpdate = true;
+    if (this.scene) {
+      this.rebalanceAmbientPopulation();
+    }
+  }
+
+  private getTargetNpcCap(density: DensityLevel): number {
+    switch (density) {
+      case 'low':
+        return 18;
+      case 'medium':
+        return 34;
+      case 'ultra':
+        return 90;
+      case 'high':
+      default:
+        return 58;
+    }
+  }
+
+  private getTargetTrafficCap(density: DensityLevel): number {
+    switch (density) {
+      case 'low':
+        return 14;
+      case 'medium':
+        return 26;
+      case 'ultra':
+        return 68;
+      case 'high':
+      default:
+        return 44;
+    }
+  }
+
+  private spawnAmbientTrafficVehicle(): void {
+    const roll = Math.random();
+    const kind: VehicleKind = roll < 0.34 ? 'rickshaw' : roll < 0.62 ? 'bike' : roll < 0.84 ? 'sedan' : 'muscle';
+    const colors = [0x991b1b, 0x1e40af, 0xb45309, 0x334155, 0x065f46, 0x7c2d12, 0xf8fafc, 0x475569, 0x0f172a];
+    const color = colors[Math.floor(Math.random() * colors.length)];
+    const rc = CITY_ROAD_CENTERS[Math.floor(Math.random() * CITY_ROAD_CENTERS.length)];
+    const axis: 'x' | 'z' = Math.random() > 0.5 ? 'x' : 'z';
+    const dir: 1 | -1 = Math.random() > 0.5 ? 1 : -1;
+    let along = (Math.random() - 0.5) * 440;
+    const laneCoord = getLeftHandLaneCoord(rc, axis, dir);
+    let vx = axis === 'z' ? laneCoord : along;
+    let vz = axis === 'z' ? along : laneCoord;
+    if (Math.hypot(vx - this.playerX, vz - this.playerZ) < 22) {
+      along = along > 0 ? along - 38 : along + 38;
+      vx = axis === 'z' ? laneCoord : along;
+      vz = axis === 'z' ? along : laneCoord;
+    }
+    const yaw = axis === 'z' ? (dir === 1 ? Math.PI : 0) : dir === 1 ? -Math.PI / 2 : Math.PI / 2;
+    const rig = createVehicleModel(kind, color);
+    if (kind === 'bike' && rig.riderRig) {
+      rig.riderRig.root.visible = true;
+      rig.riderRig.helmetMesh.visible = true;
+    }
+    const safe = this.resolveCollisions(vx, vz, kind === 'bike' ? 0.72 : kind === 'rickshaw' ? 1.2 : 1.5);
+    rig.root.position.set(safe.x, 0, safe.z);
+    rig.root.rotation.y = yaw;
+    this.scene.add(rig.root);
+
+    const maxHp = kind === 'bike' ? 95 : kind === 'rickshaw' ? 115 : kind === 'muscle' ? 200 : 170;
+    const maxSpeed = kind === 'bike' ? 28 : kind === 'rickshaw' ? 18 : kind === 'muscle' ? 25 : 20;
+    const cruise = kind === 'bike' ? 8.2 : kind === 'rickshaw' ? 6.5 : 7.5;
+    const name =
+      kind === 'bike'
+        ? 'Indian Street Bike'
+        : kind === 'rickshaw'
+          ? 'Auto-Rickshaw'
+          : kind === 'muscle'
+            ? 'Desi GT Coupe'
+            : 'Premier Sedan';
+
+    this.vehicles.push({
+      id: this.nextEntityId++,
+      name,
+      kind,
+      rig,
+      x: safe.x,
+      z: safe.z,
+      yaw,
+      speed: cruise,
+      maxSpeed,
+      massFactor: kind === 'bike' ? 0.58 : kind === 'rickshaw' ? 0.85 : kind === 'muscle' ? 1.15 : 1.0,
+      hp: maxHp,
+      maxHp,
+      destroyed: false,
+      smokeTimer: 0,
+      wreckTimer: 0,
+      hitCooldowns: new Map(),
+      occupiedByPlayer: false,
+      aiEnabled: true,
+      aiDisabled: false,
+      hasAiRider: kind === 'bike',
+      isDynamicTraffic: true,
+      aiHornCooldown: 1 + Math.random() * 4,
+      origX: safe.x,
+      origZ: safe.z,
+      origYaw: yaw,
+      origSpeed: cruise,
+      origWasStarter: false,
+      origColor: color,
+      origAxis: axis,
+      origDir: dir,
+      origRoadCenter: rc,
+      policeState: 'PATROL',
+      maxOfficers: 1,
+      spawnedOfficerIds: [],
+      dismountCooldown: 0,
+      stopCooldown: 0,
+      patrolAxis: axis,
+      patrolDir: dir,
+      patrolRoadCenter: rc,
+    });
+  }
+
+  private rebalanceAmbientPopulation(): void {
+    if (!this.scene) return;
+    const npcCap = this.getTargetNpcCap(this.settings.npcDensity);
+    const ambientNpcs = this.npcs.filter(
+      (n) => !n.dead && !n.isPolice && !n.landmarkKind && !n.isMissionEnemy,
+    );
+    let ambientCount = ambientNpcs.length;
+    if (ambientCount > npcCap) {
+      let toRemoveCount = ambientCount - npcCap;
+      const removedIds = new Set<number>();
+      for (const n of ambientNpcs) {
+        if (toRemoveCount <= 0) break;
+        if (n.hostile) continue;
+        if (Math.hypot(n.x - this.playerX, n.z - this.playerZ) < 18) continue;
+        this.scene.remove(n.rig.root);
+        removedIds.add(n.id);
+        toRemoveCount--;
+      }
+      if (removedIds.size > 0) {
+        this.npcs = this.npcs.filter((n) => !removedIds.has(n.id));
+      }
+    } else {
+      while (ambientCount < npcCap) {
+        this.spawnNpc(Math.random() < 0.2);
+        ambientCount++;
+      }
+    }
+
+    const trafficCap = this.getTargetTrafficCap(this.settings.trafficDensity);
+    const ambientVehicles = this.vehicles.filter(
+      (v) => !v.destroyed && !v.isStarterParked && !v.isTacticalReinforcement && !v.occupiedByPlayer && !v.playerClaimed,
+    );
+    let trafficCount = ambientVehicles.length;
+    if (trafficCount > trafficCap) {
+      let toDrop = trafficCount - trafficCap;
+      const dropIds = new Set<number>();
+      for (let i = ambientVehicles.length - 1; i >= 0 && toDrop > 0; i--) {
+        const v = ambientVehicles[i];
+        if (!v.isDynamicTraffic) continue;
+        if (Math.hypot(v.x - this.playerX, v.z - this.playerZ) < 22) continue;
+        this.scene.remove(v.rig.root);
+        dropIds.add(v.id);
+        toDrop--;
+      }
+      if (dropIds.size > 0) {
+        this.vehicles = this.vehicles.filter((v) => !dropIds.has(v.id));
+      }
+    } else {
+      let safety = 0;
+      while (trafficCount < trafficCap && safety < 100) {
+        safety++;
+        this.spawnAmbientTrafficVehicle();
+        trafficCount++;
+      }
+    }
   }
 
   public equipWeapon(id: WeaponId): void {
@@ -3792,15 +4090,90 @@ export class GameEngine {
     }
     this.playerMedkits--;
     this.playerHp = Math.min(this.playerMaxHp, this.playerHp + MEDKIT_HEAL_AMOUNT);
-    soundEngine.playCashPickup();
+    soundEngine.playMedkitHeal();
     this.callbacks.onToast({ text: `Used Medkit (+${MEDKIT_HEAL_AMOUNT} HP)`, tone: 'cash' });
     this.saveGameState();
     this.emitHudSnapshot();
     return true;
   }
 
+  private spawnCheatVehicle(kind: VehicleKind, name: string, color?: number): void {
+    const fwdX = -Math.sin(this.playerYaw);
+    const fwdZ = -Math.cos(this.playerYaw);
+    const spawnDist = kind === 'chopper' ? 6.2 : 4.5;
+    const rawX = this.playerX + fwdX * spawnDist;
+    const rawZ = this.playerZ + fwdZ * spawnDist;
+    const pos = this.resolveCollisions(rawX, rawZ, kind === 'chopper' ? 2.2 : 1.55);
+    const yaw = normalizeAngle(this.playerYaw + Math.PI / 2);
+    const rig = createVehicleModel(kind, color);
+    if (kind === 'bike' && rig.riderRig) {
+      rig.riderRig.root.visible = false;
+    }
+    rig.root.position.set(pos.x, 0, pos.z);
+    rig.root.rotation.y = yaw;
+    this.scene.add(rig.root);
+
+    const maxHp = kind === 'chopper' ? 320 : kind === 'police' ? 220 : kind === 'bike' ? 95 : kind === 'rickshaw' ? 115 : 185;
+    const maxSpeed = kind === 'chopper' ? 32 : kind === 'bike' ? 28 : kind === 'police' ? 24 : kind === 'rickshaw' ? 18 : 22;
+    const id = this.nextEntityId++;
+    this.vehicleFuelMap.set(id, 100);
+    this.vehicles.push({
+      id,
+      name,
+      kind,
+      rig,
+      x: pos.x,
+      y: 0,
+      z: pos.z,
+      yaw,
+      speed: 0,
+      maxSpeed,
+      massFactor: kind === 'chopper' ? 1.5 : kind === 'police' ? 1.25 : kind === 'bike' ? 0.58 : kind === 'rickshaw' ? 0.85 : 1.05,
+      hp: maxHp,
+      maxHp,
+      destroyed: false,
+      smokeTimer: 0,
+      wreckTimer: 0,
+      hitCooldowns: new Map(),
+      occupiedByPlayer: false,
+      aiEnabled: false,
+      aiDisabled: true,
+      isStarterParked: false,
+      playerClaimed: true,
+      origX: pos.x,
+      origZ: pos.z,
+      origYaw: yaw,
+      origSpeed: 0,
+      origWasStarter: false,
+      origColor: color,
+      origAxis: 'z',
+      origDir: -1,
+      origRoadCenter: 0,
+      policeState: 'PATROL',
+      maxOfficers: 1,
+      spawnedOfficerIds: [],
+      dismountCooldown: 0,
+      stopCooldown: 0,
+      patrolAxis: 'z',
+      patrolDir: -1,
+      patrolRoadCenter: 0,
+    });
+  }
+
   public applyCheat(rawCode: string): { ok: boolean; message: string } {
-    const code = rawCode.trim().toUpperCase();
+    const trimmed = rawCode.trim().toUpperCase();
+    const numericAliases: Record<string, string> = {
+      '8000': 'COPTER',
+      '2000': 'AUTO',
+      '3000': 'BIKE',
+      '1000': 'CAR',
+      '100': 'POLICE',
+      '9110': 'PAISABARSAO',
+      '7000': 'SHASTRA100',
+      '0000': 'NOCHALLAN',
+      '5555': 'VIPPASS',
+    };
+    const code = numericAliases[trimmed] ?? trimmed;
     if (code === 'PAISABARSAO') {
       this.playerCash += 2100000;
       this.playerHp = this.playerMaxHp;
@@ -3847,7 +4220,49 @@ export class GameEngine {
       this.emitHudSnapshot();
       return { ok: true, message: 'NOCHALLAN activated: Wanted stars cleared.' };
     }
-    return { ok: false, message: 'Unknown cheat code. Try PAISABARSAO, SHASTRA100, NOCHALLAN, or VIPPASS.' };
+    if (code === 'COPTER' || code === 'CHOPPER') {
+      this.spawnCheatVehicle('chopper', 'Garuda Police Chopper');
+      soundEngine.playCashPickup();
+      this.callbacks.onToast({ text: 'CHEAT: Garuda Chopper spawned nearby!', tone: 'cheat' });
+      this.emitHudSnapshot();
+      return { ok: true, message: `${code} activated: Garuda Chopper spawned in front of you.` };
+    }
+    if (code === 'AUTO') {
+      this.spawnCheatVehicle('rickshaw', 'Turbo Auto-Rickshaw');
+      soundEngine.playCarHorn('rickshaw', 0.85);
+      this.callbacks.onToast({ text: 'CHEAT: Auto-Rickshaw spawned!', tone: 'cheat' });
+      this.emitHudSnapshot();
+      return { ok: true, message: 'AUTO activated: Yellow/Green Auto-Rickshaw spawned ahead.' };
+    }
+    if (code === 'BIKE') {
+      this.hasHelmet = true;
+      this.helmetOn = true;
+      this.playerRig.helmetMesh.visible = true;
+      this.spawnCheatVehicle('bike', 'Toofan 180 Sports Bike', 0xdc2626);
+      soundEngine.playCarHorn('bike', 0.85);
+      this.callbacks.onToast({ text: 'CHEAT: Sports Bike + ISI Helmet spawned!', tone: 'cheat' });
+      this.saveGameState();
+      this.emitHudSnapshot();
+      return { ok: true, message: 'BIKE activated: Sports motorcycle + ISI Helmet equipped.' };
+    }
+    if (code === 'CAR' || code === 'SEDAN') {
+      this.spawnCheatVehicle('sedan', 'Premier Luxury Sedan', 0x1e40af);
+      soundEngine.playCarHorn('sedan', 0.85);
+      this.callbacks.onToast({ text: 'CHEAT: Premier Sedan spawned!', tone: 'cheat' });
+      this.emitHudSnapshot();
+      return { ok: true, message: `${code} activated: Civilian Sedan spawned nearby.` };
+    }
+    if (code === 'POLICE' || code === 'THANA') {
+      this.spawnCheatVehicle('police', 'Bharat Police Vajra SUV');
+      soundEngine.playCarHorn('police', 0.85);
+      this.callbacks.onToast({ text: 'CHEAT: Police Patrol Cruiser spawned!', tone: 'cheat' });
+      this.emitHudSnapshot();
+      return { ok: true, message: `${code} activated: Bharat Police patrol SUV spawned nearby.` };
+    }
+    return {
+      ok: false,
+      message: 'Unknown code. Try COPTER, AUTO, BIKE, CAR, POLICE, PAISABARSAO, SHASTRA100, NOCHALLAN, VIPPASS.',
+    };
   }
 
   private performPartialWorldCleanup(restoreHijackedVehicles: boolean): void {
@@ -5034,16 +5449,17 @@ export class GameEngine {
       this.probationDaysLeft = Math.max(0, this.probationDaysLeft - 1);
     }
 
+    const calDate = formatInGameDate(this.dayCount);
     if (sc.location === 'HOME_BED') {
       sc.subtitle =
         this.probationDaysLeft > 0
-          ? `Day ${this.dayCount} ki subah ho gayi! Full Health/Stamina restored (Court Probation: ${this.probationDaysLeft} din baaki).`
-          : `Good Morning (Day ${this.dayCount})! Full Health/Stamina restored · Bank Interest +${formatRsExact(sc.interestGain)}.`;
+          ? `${calDate} ki subah ho gayi! Full Health/Stamina restored (Court Probation: ${this.probationDaysLeft} din baaki).`
+          : `Good Morning (${calDate})! Full Health/Stamina restored · Bank Interest +${formatRsExact(sc.interestGain)}.`;
     } else {
       sc.subtitle =
         sc.remainingAfterWake <= 0.05
-          ? `Day ${this.dayCount} Subah 06:05 AM! Saza poori ho gayi — ab aap kanooni taur par riha hone wale hain!`
-          : `Day ${this.dayCount} Subah 06:05 AM Roll Call! Baaki Saza: ${sc.remainingAfterWake.toFixed(2)} din · Bank Interest +${formatRsExact(sc.interestGain)}.`;
+          ? `${calDate} Subah 06:05 AM! Saza poori ho gayi — ab aap kanooni taur par riha hone wale hain!`
+          : `${calDate} Subah 06:05 AM Roll Call! Baaki Saza: ${sc.remainingAfterWake.toFixed(2)} din · Bank Interest +${formatRsExact(sc.interestGain)}.`;
     }
   }
 
@@ -5060,6 +5476,7 @@ export class GameEngine {
     }
     const location = sc.location;
     const interestGain = sc.interestGain;
+    const calDate = formatInGameDate(this.dayCount);
     this.gameMinutes = sc.targetMinutes;
     this.applyTimeOfDayLighting();
     this.sleepCutscene = null;
@@ -5084,8 +5501,8 @@ export class GameEngine {
       this.callbacks.onToast({
         text:
           this.probationDaysLeft > 0
-            ? `Good Morning (Day ${this.dayCount})! Full HP/Stamina restored · Probation: ${this.probationDaysLeft}d remaining`
-            : `Good Morning (Day ${this.dayCount})! Full HP/Stamina restored, Progress Saved & Bank Interest +${formatRsExact(interestGain)}.`,
+            ? `Good Morning (${calDate})! Full HP/Stamina restored · Probation: ${this.probationDaysLeft}d remaining`
+            : `Good Morning (${calDate})! Full HP/Stamina restored, Progress Saved & Bank Interest +${formatRsExact(interestGain)}.`,
         tone: 'cash',
       });
       this.emitHudSnapshot();
@@ -5113,16 +5530,16 @@ export class GameEngine {
 
       if (this.jailState.remainingDays <= 0.05) {
         this.callbacks.onToast({
-          text: `Subah ho gayi (Day ${this.dayCount})! Bank Interest +${formatRsExact(interestGain)} · Saza Poori!`,
+          text: `Subah ho gayi (${calDate})! Bank Interest +${formatRsExact(interestGain)} · Saza Poori!`,
           tone: 'cash',
         });
         this.releaseFromJail('LEGAL');
         return;
       }
 
-      this.jailState.statusBanner = `Nayi Subah (Day ${this.dayCount}, 06:05 AM)! Bank Interest +${formatRsExact(interestGain)} · Baaki Saza: ${this.jailState.remainingDays.toFixed(2)}d`;
+      this.jailState.statusBanner = `Nayi Subah (${calDate}, 06:05 AM)! Bank Interest +${formatRsExact(interestGain)} · Baaki Saza: ${this.jailState.remainingDays.toFixed(2)}d`;
       this.callbacks.onToast({
-        text: `Bunk Sleep Complete · Day ${this.dayCount} (+${formatRsExact(interestGain)} Bank Interest)`,
+        text: `Bunk Sleep Complete · ${calDate} (+${formatRsExact(interestGain)} Bank Interest)`,
         tone: 'cash',
       });
     }
@@ -6045,7 +6462,15 @@ export class GameEngine {
       v.occupiedByPlayer = false;
       v.aiEnabled = false;
       v.speed *= 0.4;
-      v.rig.root.rotation.z = 0;
+      v.rig.root.rotation.set(0, v.yaw, 0);
+      if (v.rig.cabinMesh) v.rig.cabinMesh.visible = true;
+      if (v.rig.cockpitGroup) {
+        v.rig.cockpitGroup.visible = v.kind === 'rickshaw' || v.kind === 'chopper';
+      }
+      if (v.rig.cabinGlassMat) v.rig.cabinGlassMat.opacity = 0.34;
+      this.chopperAscendTouch = false;
+      this.chopperDescendTouch = false;
+      this.vehicleSteerVisual = 0;
       this.currentVehicle = null;
       // Restore player rig limbs cleanly (e.g. from motorcycle riding pose)
       this.playerRig.leftArm.rotation.x = 0;
@@ -6060,19 +6485,21 @@ export class GameEngine {
       const sideZ = Math.sin(v.yaw) * 2.1;
       const exitPos = this.resolveCollisions(v.x + sideX, v.z + sideZ, 0.45);
       this.playerX = exitPos.x;
+      this.playerY = v.y ?? 0;
+      this.playerVy = 0;
       this.playerZ = exitPos.z;
       this.playerYaw = v.yaw;
       this.playerRig.root.visible = !this.firstPerson;
-      this.playerRig.root.position.set(this.playerX, 0, this.playerZ);
+      this.playerRig.root.position.set(this.playerX, this.playerY, this.playerZ);
       this.refreshPlayerWeaponMesh();
       soundEngine.playUiClick();
       this.emitHudSnapshot();
       return;
     }
 
-    // Find closest non-destroyed vehicle within 4.2m
+    // Find closest non-destroyed vehicle within 4.5m
     let closest: VehicleEntity | null = null;
-    let bestDist = 4.2;
+    let bestDist = 4.5;
     for (const v of this.vehicles) {
       if (v.destroyed) continue;
       const d = Math.hypot(v.x - this.playerX, v.z - this.playerZ);
@@ -6092,6 +6519,9 @@ export class GameEngine {
       closest.playerClaimed = true;
       closest.speed = 0;
       this.adsActive = false;
+      if (!this.vehicleFuelMap.has(closest.id)) {
+        this.vehicleFuelMap.set(closest.id, 78 + (closest.id % 22));
+      }
 
       // Eject visible helmeted AI rider onto pavement when hijacking an occupied bike
       if (closest.kind === 'bike' && closest.hasAiRider && closest.rig.riderRig) {
@@ -6104,6 +6534,7 @@ export class GameEngine {
       // Show seated rider + 3D helmet when mounting a motorcycle
       this.playerRig.root.visible = closest.kind === 'bike' ? !this.firstPerson : false;
       this.playerRig.helmetMesh.visible = this.hasHelmet && this.helmetOn;
+      this.syncVehicleFirstPersonVisibility();
       if (this.fpWeaponGroup) this.fpWeaponGroup.visible = false;
       this.camYaw = closest.yaw;
 
@@ -6740,6 +7171,14 @@ export class GameEngine {
 
   public toggleOrStartMic(): void {
     soundEngine.unlock();
+    if (!this.settings.voiceMicEnabled) {
+      this.stopMicRecognition();
+      this.callbacks.onToast({
+        text: 'Voice Mic is OFF (enable in Settings → Audio if you want online voice commands)',
+        tone: 'info',
+      });
+      return;
+    }
     if (this.micState.active) {
       this.stopMicRecognition();
       this.micState.status = 'Mic band kiya gaya.';
@@ -7845,6 +8284,7 @@ export class GameEngine {
     radius: number,
     ignoreVehicleId?: number,
     skipVehicles = false,
+    altitudeY = 0,
   ): { x: number; z: number } {
     let rx = clamp(x, -WORLD_LIMIT, WORLD_LIMIT);
     let rz = clamp(z, -WORLD_LIMIT, WORLD_LIMIT);
@@ -7865,6 +8305,7 @@ export class GameEngine {
           const c = bucket[i];
           if (this._visitedColliders.has(c) || this.disabledColliders.has(c)) continue;
           this._visitedColliders.add(c);
+          if (altitudeY > c.height + 0.5) continue;
           const closestX = clamp(rx, c.minX, c.maxX);
           const closestZ = clamp(rz, c.minZ, c.maxZ);
           const dx = rx - closestX;
@@ -7893,6 +8334,7 @@ export class GameEngine {
     }
 
     for (const cc of this.circleColliders) {
+      if (altitudeY > cc.height + 0.5) continue;
       if (Math.abs(rx - cc.x) > cc.radius + radius + 0.5 || Math.abs(rz - cc.z) > cc.radius + radius + 0.5) continue;
       const dx = rx - cc.x;
       const dz = rz - cc.z;
@@ -7908,9 +8350,10 @@ export class GameEngine {
       }
     }
 
-    if (!skipVehicles) {
+    if (!skipVehicles && altitudeY < 2.8) {
       for (const v of this.vehicles) {
         if (v.id === ignoreVehicleId) continue;
+        if ((v.y ?? 0) > 2.8) continue;
         if (Math.abs(rx - v.x) > 4.5 || Math.abs(rz - v.z) > 4.5) continue;
         const halfW = v.kind === 'bike' ? 0.42 : v.kind === 'rickshaw' ? 0.85 : 1.12;
         const halfL = v.kind === 'bike' ? 1.05 : v.kind === 'rickshaw' ? 1.52 : 2.32;
@@ -8634,10 +9077,6 @@ export class GameEngine {
       }
     }
 
-    // Arrow keys look inside jail
-    if (this.keys.has('ArrowLeft')) this.camYaw = normalizeAngle(this.camYaw + 2.0 * dt);
-    if (this.keys.has('ArrowRight')) this.camYaw = normalizeAngle(this.camYaw - 2.0 * dt);
-
     this.stepPlayer(dt);
     this.playerY = Math.max(0.24, this.playerY);
     this.playerRig.root.position.y = this.playerY;
@@ -9232,22 +9671,14 @@ export class GameEngine {
       }
     }
 
-    // Continuous fire for automatic weapons
+    // Continuous fire for held touch Fire or automatic weapons
     if (
-      this.mouseDownLeft &&
+      (this.mouseDownLeft || this.touchAttackHeld) &&
       !this.weaponWheelOpen &&
       !this.currentVehicle &&
-      (this.activeWeapon === 'smg' || this.activeWeapon === 'rifle')
+      (this.touchAttackHeld || this.activeWeapon === 'smg' || this.activeWeapon === 'rifle')
     ) {
       this.tryPlayerAttack();
-    }
-
-    // Arrow Left / Right keyboard rotation (zero automatic edge-drift)
-    if (this.keys.has('ArrowLeft')) {
-      this.camYaw = normalizeAngle(this.camYaw + 2.0 * dt);
-    }
-    if (this.keys.has('ArrowRight')) {
-      this.camYaw = normalizeAngle(this.camYaw - 2.0 * dt);
     }
 
     this.stepPlayer(dt);
@@ -9476,56 +9907,105 @@ export class GameEngine {
       }
 
       const v = this.currentVehicle;
-      const keyAccel = (this.keys.has('KeyW') || this.keys.has('ArrowUp') ? 1 : 0) -
-        (this.keys.has('KeyS') || this.keys.has('ArrowDown') ? 1 : 0);
+      const keyAccel = (this.isActionKeyHeld('moveForward') ? 1 : 0) - (this.isActionKeyHeld('moveBackward') ? 1 : 0);
       const accel = Math.abs(this.touchMoveY) > 0.12 ? this.touchMoveY : keyAccel;
-      const keySteer = (this.keys.has('KeyA') ? 1 : 0) - (this.keys.has('KeyD') ? 1 : 0);
+      const keySteer = (this.isActionKeyHeld('moveLeft') ? 1 : 0) - (this.isActionKeyHeld('moveRight') ? 1 : 0);
       const steer = Math.abs(this.touchMoveX) > 0.12 ? -this.touchMoveX : keySteer;
 
-      if (accel > 0.05) {
-        const accelRate = v.kind === 'bike' ? 21 : 16;
-        v.speed = Math.min(v.maxSpeed, v.speed + accelRate * accel * dt);
-      } else if (accel < -0.05) {
-        v.speed = Math.max(-10, v.speed + 22 * accel * dt);
+      this.vehicleSteerVisual = THREE.MathUtils.damp(this.vehicleSteerVisual, steer, 10, dt);
+      if (v.rig.steeringWheel) {
+        const axis = v.rig.steerAxis ?? 'z';
+        v.rig.steeringWheel.rotation[axis] = this.vehicleSteerVisual * (axis === 'z' ? 1.15 : 0.45);
+      }
+
+      if (v.kind === 'chopper') {
+        const ascend = this.isActionKeyHeld('jump') || this.chopperAscendTouch;
+        const descend = this.isActionKeyHeld('sprint') || this.chopperDescendTouch;
+        const climbInput = (ascend ? 1 : 0) - (descend ? 1 : 0);
+        const curY = v.y ?? 0;
+        const nextY = clamp(curY + climbInput * 12.5 * dt, 0, 44);
+        v.y = nextY;
+
+        if (accel > 0.05) {
+          v.speed = Math.min(v.maxSpeed, v.speed + 20 * accel * dt);
+        } else if (accel < -0.05) {
+          v.speed = Math.max(-14, v.speed + 18 * accel * dt);
+        } else {
+          v.speed *= Math.exp(-2.0 * dt);
+        }
+
+        if ((nextY > 0.25 || Math.abs(v.speed) > 0.35) && Math.abs(steer) > 0.05) {
+          v.yaw = normalizeAngle(v.yaw + steer * 2.1 * dt);
+        }
+
+        const fwdX = -Math.sin(v.yaw);
+        const fwdZ = -Math.cos(v.yaw);
+        const desiredX = v.x + fwdX * v.speed * dt;
+        const desiredZ = v.z + fwdZ * v.speed * dt;
+        const nextPos = this.resolveCollisions(desiredX, desiredZ, 2.2, v.id, false, nextY);
+        if (Math.hypot(nextPos.x - desiredX, nextPos.z - desiredZ) > 0.08) {
+          v.speed *= 0.35;
+        }
+        v.x = nextPos.x;
+        v.z = nextPos.z;
+        v.rig.root.position.set(v.x, nextY, v.z);
+        v.rig.root.rotation.y = v.yaw;
+        v.rig.root.rotation.x = THREE.MathUtils.damp(v.rig.root.rotation.x, clamp(-accel * 0.14, -0.18, 0.18), 6, dt);
+        v.rig.root.rotation.z = THREE.MathUtils.damp(v.rig.root.rotation.z, clamp(steer * 0.2, -0.24, 0.24), 6, dt);
+        this.playerY = nextY;
       } else {
-        v.speed *= Math.exp(-3.2 * dt);
+        if (accel > 0.05) {
+          const accelRate = v.kind === 'bike' ? 21 : 16;
+          v.speed = Math.min(v.maxSpeed, v.speed + accelRate * accel * dt);
+        } else if (accel < -0.05) {
+          v.speed = Math.max(-10, v.speed + 22 * accel * dt);
+        } else {
+          v.speed *= Math.exp(-3.2 * dt);
+        }
+
+        if (Math.abs(v.speed) > 0.35 && Math.abs(steer) > 0.05) {
+          const dirSign = v.speed >= 0 ? 1 : -1;
+          const turnRate = v.kind === 'bike' ? 2.55 : 2.15;
+          v.yaw = normalizeAngle(v.yaw + steer * dirSign * turnRate * dt);
+        }
+
+        const fwdX = -Math.sin(v.yaw);
+        const fwdZ = -Math.cos(v.yaw);
+        const desiredX = v.x + fwdX * v.speed * dt;
+        const desiredZ = v.z + fwdZ * v.speed * dt;
+        const colR = v.kind === 'bike' ? 0.72 : v.kind === 'rickshaw' ? 1.25 : 1.55;
+        const nextPos = this.resolveCollisions(desiredX, desiredZ, colR, v.id);
+        if (Math.hypot(nextPos.x - desiredX, nextPos.z - desiredZ) > 0.05) {
+          v.speed *= 0.35;
+        }
+        v.x = nextPos.x;
+        v.z = nextPos.z;
+        v.y = 0;
+        v.rig.root.position.set(v.x, 0, v.z);
+        v.rig.root.rotation.y = v.yaw;
+        this.playerY = 0;
+
+        if (v.kind === 'bike') {
+          const targetLean = Math.abs(v.speed) > 1.5 ? steer * 0.24 : 0;
+          v.rig.root.rotation.z = THREE.MathUtils.damp(v.rig.root.rotation.z, targetLean, 9, dt);
+          this.playerRig.root.visible = !this.firstPerson;
+          this.playerRig.helmetMesh.visible = this.hasHelmet && this.helmetOn;
+          this.playerRig.root.position.set(v.x, 0.24, v.z);
+          this.playerRig.root.rotation.y = v.yaw;
+          this.playerRig.root.rotation.z = v.rig.root.rotation.z;
+          this.playerRig.leftArm.rotation.x = 0.85;
+          this.playerRig.rightArm.rotation.x = 0.85;
+          this.playerRig.leftLeg.rotation.x = 0.55;
+          this.playerRig.rightLeg.rotation.x = 0.55;
+        } else {
+          v.rig.root.rotation.z = 0;
+          this.playerRig.root.visible = false;
+        }
       }
 
-      if (Math.abs(v.speed) > 0.35 && Math.abs(steer) > 0.05) {
-        const dirSign = v.speed >= 0 ? 1 : -1;
-        const turnRate = v.kind === 'bike' ? 2.55 : 2.15;
-        v.yaw = normalizeAngle(v.yaw + steer * dirSign * turnRate * dt);
-      }
-
-      const fwdX = -Math.sin(v.yaw);
-      const fwdZ = -Math.cos(v.yaw);
-      const desiredX = v.x + fwdX * v.speed * dt;
-      const desiredZ = v.z + fwdZ * v.speed * dt;
-      const colR = v.kind === 'bike' ? 0.72 : v.kind === 'rickshaw' ? 1.25 : 1.55;
-      const nextPos = this.resolveCollisions(desiredX, desiredZ, colR, v.id);
-      if (Math.hypot(nextPos.x - desiredX, nextPos.z - desiredZ) > 0.05) {
-        v.speed *= 0.35;
-      }
-      v.x = nextPos.x;
-      v.z = nextPos.z;
-      v.rig.root.position.set(v.x, 0, v.z);
-      v.rig.root.rotation.y = v.yaw;
-
-      if (v.kind === 'bike') {
-        const targetLean = Math.abs(v.speed) > 1.5 ? steer * 0.24 : 0;
-        v.rig.root.rotation.z = THREE.MathUtils.damp(v.rig.root.rotation.z, targetLean, 9, dt);
-        this.playerRig.root.visible = !this.firstPerson;
-        this.playerRig.helmetMesh.visible = this.hasHelmet && this.helmetOn;
-        this.playerRig.root.position.set(v.x, 0.24, v.z);
-        this.playerRig.root.rotation.y = v.yaw;
-        this.playerRig.root.rotation.z = v.rig.root.rotation.z;
-        this.playerRig.leftArm.rotation.x = 0.85;
-        this.playerRig.rightArm.rotation.x = 0.85;
-        this.playerRig.leftLeg.rotation.x = 0.55;
-        this.playerRig.rightLeg.rotation.x = 0.55;
-      } else {
-        v.rig.root.rotation.z = 0;
-        this.playerRig.root.visible = false;
+      if (Math.abs(v.speed) > 0.5 || (v.y ?? 0) > 0.2) {
+        const curFuel = this.vehicleFuelMap.get(v.id) ?? 90;
+        this.vehicleFuelMap.set(v.id, Math.max(8, curFuel - 0.14 * dt));
       }
 
       this.playerX = v.x;
@@ -9536,9 +10016,8 @@ export class GameEngine {
     }
 
     // On-foot camera-relative WASD + Touch Joystick (W = camFwd = -Z when camYaw=0)
-    const keyFwd = (this.keys.has('KeyW') || this.keys.has('ArrowUp') ? 1 : 0) -
-      (this.keys.has('KeyS') || this.keys.has('ArrowDown') ? 1 : 0);
-    const keyRight = (this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0);
+    const keyFwd = (this.isActionKeyHeld('moveForward') ? 1 : 0) - (this.isActionKeyHeld('moveBackward') ? 1 : 0);
+    const keyRight = (this.isActionKeyHeld('moveRight') ? 1 : 0) - (this.isActionKeyHeld('moveLeft') ? 1 : 0);
 
     const inputFwd = Math.abs(this.touchMoveY) > 0.08 ? this.touchMoveY : keyFwd;
     const inputRight = Math.abs(this.touchMoveX) > 0.08 ? this.touchMoveX : keyRight;
@@ -9552,7 +10031,7 @@ export class GameEngine {
     let moveZ = camFwdZ * inputFwd + camRightZ * inputRight;
     const len = Math.hypot(moveX, moveZ);
 
-    const wantsSprint = this.touchSprint || this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
+    const wantsSprint = this.touchSprint || this.isActionKeyHeld('sprint');
     const isMoving = len > 0.01;
     const canSprint = wantsSprint && isMoving && !this.staminaExhausted && this.playerStamina > 0;
 
@@ -9668,6 +10147,32 @@ export class GameEngine {
         else v.hitCooldowns.set(eid, ttl - dt);
       }
 
+      if (v.aiHornCooldown && v.aiHornCooldown > 0) {
+        v.aiHornCooldown = Math.max(0, v.aiHornCooldown - dt);
+      }
+
+      // Spin Chopper rotors when piloted or airborne
+      if (v.kind === 'chopper' && v.rig.mainRotor && v.rig.tailRotor) {
+        const airborne = (v.y ?? 0) > 0.12;
+        if (v.occupiedByPlayer || airborne) {
+          v.rig.mainRotor.rotation.y += 18 * dt;
+          v.rig.tailRotor.rotation.x += 28 * dt;
+        }
+        if (!v.occupiedByPlayer && airborne) {
+          v.y = Math.max(0, (v.y ?? 0) - 5.5 * dt);
+        }
+      }
+
+      // Headlights emissive intensity
+      if (v.rig.headlightMats && v.rig.headlightMats.length > 0) {
+        const isNight = this.gameMinutes >= 1060 || this.gameMinutes <= 380;
+        const lightsOn = v.occupiedByPlayer ? this.vehicleHeadlightsOn : (!v.isStarterParked && (isNight || v.aiEnabled));
+        const inten = lightsOn ? 1.8 : 0.08;
+        for (const mat of v.rig.headlightMats) {
+          mat.emissiveIntensity = inten;
+        }
+      }
+
       // Wheel spin
       for (const w of v.rig.wheels) {
         w.rotation.x -= v.speed * dt * 1.8;
@@ -9686,7 +10191,7 @@ export class GameEngine {
           // Exited/stolen/parked vehicles have AI permanently off — roll smoothly to a complete stop
           v.speed *= Math.exp(-3.8 * dt);
           if (Math.abs(v.speed) < 0.25) v.speed = 0;
-          if (v.speed !== 0) {
+          if (v.speed !== 0 && v.kind !== 'chopper') {
             const fwdX = -Math.sin(v.yaw);
             const fwdZ = -Math.cos(v.yaw);
             const colR = v.kind === 'bike' ? 0.72 : v.kind === 'rickshaw' ? 1.2 : 1.5;
@@ -9713,6 +10218,7 @@ export class GameEngine {
           const fwdZ = -Math.cos(v.yaw);
 
           // Check upcoming major intersection traffic signals along vehicle heading
+          let blockedByTraffic = false;
           for (const sig of this.trafficSignals) {
             const alignedNS = Math.abs(fwdZ) > 0.7 && Math.abs(v.x - sig.x) < 6.5;
             const alignedEW = Math.abs(fwdX) > 0.7 && Math.abs(v.z - sig.z) < 6.5;
@@ -9733,10 +10239,10 @@ export class GameEngine {
           // Brake smoothly behind any same-direction vehicle or burnt wreck ahead in the same lane
           if (targetSpeed > 0) {
             for (const other of this.vehicles) {
-              if (other.id === v.id) continue;
+              if (other.id === v.id || (other.y ?? 0) > 2.2) continue;
               const otherFwdX = -Math.sin(other.yaw);
               const otherFwdZ = -Math.cos(other.yaw);
-              const sameDir = otherFwdX * fwdX + otherFwdZ * fwdZ > 0.5 || other.destroyed;
+              const sameDir = otherFwdX * fwdX + otherFwdZ * fwdZ > 0.5 || other.destroyed || other.occupiedByPlayer;
               if (!sameDir) continue;
               const toX = other.x - v.x;
               const toZ = other.z - v.z;
@@ -9746,9 +10252,28 @@ export class GameEngine {
                 if (lateral < 2.3) {
                   const aheadSpd = Math.abs(other.speed) < 0.4 || other.destroyed ? 0 : Math.max(0, Math.abs(other.speed) - 0.6);
                   targetSpeed = Math.min(targetSpeed, aheadSpd);
+                  if (aheadSpd === 0) blockedByTraffic = true;
                 }
               }
             }
+          }
+
+          // Check if player is standing or stopped directly in front on the road -> realistic AI honk
+          const toPlayerX = this.playerX - v.x;
+          const toPlayerZ = this.playerZ - v.z;
+          const distToPlayer = Math.hypot(toPlayerX, toPlayerZ);
+          if (distToPlayer < 12 && this.playerY < 2.0) {
+            const pFwd = toPlayerX * fwdX + toPlayerZ * fwdZ;
+            const pLat = Math.abs(toPlayerX * fwdZ - toPlayerZ * fwdX);
+            if (pFwd > 1.8 && pFwd < 11 && pLat < 2.4) {
+              blockedByTraffic = true;
+              if (!this.currentVehicle && pFwd < 7.5) targetSpeed = Math.min(targetSpeed, 1.8);
+            }
+          }
+
+          if (blockedByTraffic && (!v.aiHornCooldown || v.aiHornCooldown <= 0) && distToPlayer < 46) {
+            v.aiHornCooldown = 2.6 + Math.random() * 4.5;
+            soundEngine.playCarHorn(v.kind, clamp(1 - distToPlayer / 48, 0.08, 0.72));
           }
 
           v.speed = THREE.MathUtils.damp(v.speed, targetSpeed, targetSpeed === 0 ? 9.5 : 2.8, dt);
@@ -9795,7 +10320,7 @@ export class GameEngine {
       const hitRadius = v.kind === 'bike' ? 1.15 : v.kind === 'rickshaw' ? 1.65 : 2.15;
 
       // High-speed crash damage for player-driven vehicles (cars can catch fire & blast; helmets reduce bike crash dmg 65%)
-      if (v.occupiedByPlayer && impactSpeed > 13.5 && !v.hitCooldowns.has(-99)) {
+      if (v.occupiedByPlayer && impactSpeed > 13.5 && !v.hitCooldowns.has(-99) && (v.y ?? 0) < 1.5) {
         const fwdX = -Math.sin(v.yaw);
         const fwdZ = -Math.cos(v.yaw);
         const colR = v.kind === 'bike' ? 0.72 : v.kind === 'rickshaw' ? 1.25 : 1.55;
@@ -9813,48 +10338,52 @@ export class GameEngine {
         }
       }
 
-      // Speed & momentum-based Vehicle -> NPC collisions (5m fast AABB early-out)
-      for (const npc of this.npcs) {
-        if (npc.dead) continue;
-        const dx = npc.x - v.x;
-        const dz = npc.z - v.z;
-        if (Math.abs(dx) > 5 || Math.abs(dz) > 5) continue;
-        const dist = Math.hypot(dx, dz);
-        if (dist < hitRadius) {
-          const nx = dist > 0.01 ? dx / dist : Math.cos(v.yaw);
-          const nz = dist > 0.01 ? dz / dist : -Math.sin(v.yaw);
-          const pushOut = hitRadius + 0.1 - dist;
-          npc.x += nx * pushOut;
-          npc.z += nz * pushOut;
+      // Speed & momentum-based Vehicle -> NPC collisions (skip when chopper flies high)
+      if ((v.y ?? 0) < 2.2) {
+        for (const npc of this.npcs) {
+          if (npc.dead) continue;
+          const dx = npc.x - v.x;
+          const dz = npc.z - v.z;
+          if (Math.abs(dx) > 5 || Math.abs(dz) > 5) continue;
+          const dist = Math.hypot(dx, dz);
+          if (dist < hitRadius) {
+            const nx = dist > 0.01 ? dx / dist : Math.cos(v.yaw);
+            const nz = dist > 0.01 ? dz / dist : -Math.sin(v.yaw);
+            const pushOut = hitRadius + 0.1 - dist;
+            npc.x += nx * pushOut;
+            npc.z += nz * pushOut;
 
-          if (impactSpeed > 4.0 && !v.hitCooldowns.has(npc.id)) {
-            v.hitCooldowns.set(npc.id, 0.45);
-            if (v.occupiedByPlayer && impactSpeed > 8.5) {
-              this.crimeRecklessDriving = true;
+            if (impactSpeed > 4.0 && !v.hitCooldowns.has(npc.id)) {
+              v.hitCooldowns.set(npc.id, 0.45);
+              if (v.occupiedByPlayer && impactSpeed > 8.5) {
+                this.crimeRecklessDriving = true;
+              }
+              const dmg = Math.round(clamp((impactSpeed - 3.2) * 10.5 * v.massFactor, 12, 160));
+              const knockback = Math.min(18, impactSpeed * 0.9 * v.massFactor);
+              this.damageNpc(npc, dmg, nx, nz, knockback, v.occupiedByPlayer);
+              soundEngine.playCarCrash(clamp(impactSpeed / 20, 0.3, 1));
+              v.speed *= 0.86;
             }
-            const dmg = Math.round(clamp((impactSpeed - 3.2) * 10.5 * v.massFactor, 12, 160));
-            const knockback = Math.min(18, impactSpeed * 0.9 * v.massFactor);
-            this.damageNpc(npc, dmg, nx, nz, knockback, v.occupiedByPlayer);
-            soundEngine.playCarCrash(clamp(impactSpeed / 20, 0.3, 1));
-            v.speed *= 0.86;
           }
         }
       }
 
       // Vehicle -> Street Dog impact
-      for (const dog of this.streetDogs) {
-        if (dog.dead || dog.hitCooldown > 0) continue;
-        if (Math.abs(dog.x - v.x) > 5 || Math.abs(dog.z - v.z) > 5) continue;
-        const dist = Math.hypot(dog.x - v.x, dog.z - v.z);
-        if (dist < hitRadius && impactSpeed > 5.2) {
-          dog.hitCooldown = 0.6;
-          const dmg = Math.round(clamp((impactSpeed - 4.0) * 9.0 * v.massFactor, 15, 90));
-          this.damageDog(dog, dmg, v.occupiedByPlayer);
+      if ((v.y ?? 0) < 2.2) {
+        for (const dog of this.streetDogs) {
+          if (dog.dead || dog.hitCooldown > 0) continue;
+          if (Math.abs(dog.x - v.x) > 5 || Math.abs(dog.z - v.z) > 5) continue;
+          const dist = Math.hypot(dog.x - v.x, dog.z - v.z);
+          if (dist < hitRadius && impactSpeed > 5.2) {
+            dog.hitCooldown = 0.6;
+            const dmg = Math.round(clamp((impactSpeed - 4.0) * 9.0 * v.massFactor, 15, 90));
+            this.damageDog(dog, dmg, v.occupiedByPlayer);
+          }
         }
       }
 
       // Speed & momentum-based Vehicle -> Player collision (if player on foot & not jumping above chassis)
-      if (!v.occupiedByPlayer && !this.currentVehicle && this.playerY < 1.35) {
+      if (!v.occupiedByPlayer && !this.currentVehicle && this.playerY < 1.35 && (v.y ?? 0) < 2.0) {
         const dx = this.playerX - v.x;
         const dz = this.playerZ - v.z;
         const distToPlayer = Math.hypot(dx, dz);
@@ -9887,7 +10416,7 @@ export class GameEngine {
         }
       }
 
-      v.rig.root.position.set(v.x, 0, v.z);
+      v.rig.root.position.set(v.x, v.y ?? 0, v.z);
       v.rig.root.rotation.y = v.yaw;
     }
 
@@ -10561,11 +11090,8 @@ export class GameEngine {
       this.corneredArrestTimer = 0;
     }
 
-    // Maintain healthy ambient street population across expanded city
-    while (activeCount < 24) {
-      this.spawnNpc(Math.random() < 0.22);
-      activeCount++;
-    }
+    // Maintain ambient NPC & AI traffic population scaled to user density settings
+    this.rebalanceAmbientPopulation();
   }
 
   private stepPickupsAndTraces(dt: number): void {
@@ -10676,11 +11202,45 @@ export class GameEngine {
 
   private updateCamera(dt: number): void {
     const canAds = this.adsActive && !this.currentVehicle && this.activeWeapon !== 'fists';
-    const targetFov = canAds ? WEAPONS[this.activeWeapon].scopeFov : 62;
+    const targetFov = canAds ? WEAPONS[this.activeWeapon].scopeFov : this.cameraMode === 'first_person' && this.currentVehicle ? 72 : 62;
     this.currentFov = THREE.MathUtils.damp(this.currentFov, targetFov, 11, dt);
     if (Math.abs(this.camera.fov - this.currentFov) > 0.05) {
       this.camera.fov = this.currentFov;
       this.camera.updateProjectionMatrix();
+    }
+
+    if (this.cameraMode === 'first_person' && this.currentVehicle) {
+      const v = this.currentVehicle;
+      const offset =
+        v.kind === 'bike'
+          ? { right: 0, up: 1.42, fwd: 0.04 }
+          : v.kind === 'rickshaw'
+            ? { right: 0, up: 1.46, fwd: 0.26 }
+            : v.kind === 'chopper'
+              ? { right: -0.34, up: 1.52, fwd: 1.25 }
+              : v.kind === 'police'
+                ? { right: -0.36, up: 1.48, fwd: 0.28 }
+                : v.kind === 'swat_van' || v.kind === 'army_truck' || v.kind === 'armored_apc'
+                  ? { right: -0.34, up: 1.82, fwd: 1.18 }
+                  : { right: -0.34, up: 1.24, fwd: 0.22 };
+
+      const fwdX = -Math.sin(v.yaw);
+      const fwdZ = -Math.cos(v.yaw);
+      const rightX = Math.cos(v.yaw);
+      const rightZ = -Math.sin(v.yaw);
+      const eyeX = v.x + fwdX * offset.fwd + rightX * offset.right;
+      const eyeY = (v.y ?? 0) + offset.up;
+      const eyeZ = v.z + fwdZ * offset.fwd + rightZ * offset.right;
+      this.camera.position.set(eyeX, eyeY, eyeZ);
+
+      const cosP = Math.cos(this.camPitch);
+      const lookX = -Math.sin(this.camYaw) * cosP;
+      const lookY = -Math.sin(this.camPitch);
+      const lookZ = -Math.cos(this.camYaw) * cosP;
+      this._camTarget.set(eyeX + lookX * 16, eyeY + lookY * 16, eyeZ + lookZ * 16);
+      this.camera.lookAt(this._camTarget);
+      if (this.fpWeaponGroup) this.fpWeaponGroup.visible = false;
+      return;
     }
 
     if (this.firstPerson && !this.currentVehicle) {
@@ -10713,8 +11273,31 @@ export class GameEngine {
       this.fpWeaponGroup.visible = false;
     }
 
-    const dist = this.currentVehicle ? 9.2 : canAds ? 3.2 : 6.4;
-    const height = this.currentVehicle ? 3.5 : canAds ? 1.85 : 2.35;
+    const isClose = this.cameraMode === 'third_close';
+    const baseDist = this.currentVehicle
+      ? this.currentVehicle.kind === 'chopper'
+        ? isClose
+          ? 9.4
+          : 12.6
+        : isClose
+          ? 6.2
+          : 9.2
+      : isClose
+        ? 4.2
+        : 6.4;
+    const baseHeight = this.currentVehicle
+      ? this.currentVehicle.kind === 'chopper'
+        ? isClose
+          ? 3.8
+          : 4.8
+        : isClose
+          ? 2.55
+          : 3.5
+      : isClose
+        ? 1.95
+        : 2.35;
+    const dist = canAds ? 3.2 : baseDist;
+    const height = canAds ? 1.85 : baseHeight;
     const camFwdX = -Math.sin(this.camYaw);
     const camFwdZ = -Math.cos(this.camYaw);
     const shoulderOffset = canAds ? 0.55 : 0;
@@ -10723,12 +11306,13 @@ export class GameEngine {
 
     this._camDesired.set(
       this.playerX - camFwdX * dist + rightX,
-      height + this.playerY * 0.65 + Math.sin(this.camPitch) * (canAds ? 1.5 : 2.8),
+      height + this.playerY * 0.85 + Math.sin(this.camPitch) * (canAds ? 1.5 : 2.8),
       this.playerZ - camFwdZ * dist + rightZ,
     );
     this._camTarget.set(
       this.playerX + rightX,
-      this.currentVehicle ? 1.2 : 1.45 + this.playerY * 0.55 - (canAds ? Math.sin(this.camPitch) * 1.1 : 0),
+      (this.currentVehicle ? 1.2 + (this.currentVehicle.y ?? 0) : 1.45 + this.playerY * 0.55) -
+        (canAds ? Math.sin(this.camPitch) * 1.1 : 0),
       this.playerZ + rightZ,
     );
 
@@ -11529,11 +12113,29 @@ export class GameEngine {
       currentVehicleKind: this.currentVehicle?.kind ?? null,
       vehicleName: this.currentVehicle?.name ?? '',
       vehicleSpeedKmh: Math.round((this.currentVehicle ? Math.abs(this.currentVehicle.speed) : 0) * 6.2),
+      vehicleSteer: this.currentVehicle ? this.vehicleSteerVisual : 0,
+      vehicleGear: (() => {
+        const cv = this.currentVehicle;
+        if (!cv) return 'N';
+        if (cv.kind === 'chopper' && (cv.y ?? 0) > 0.35) return 'FLY';
+        if (cv.speed < -0.4) return 'R';
+        if (Math.abs(cv.speed) < 0.35) return 'N';
+        const ratio = Math.abs(cv.speed) / Math.max(1, cv.maxSpeed);
+        if (ratio < 0.2) return 'D1';
+        if (ratio < 0.42) return 'D2';
+        if (ratio < 0.65) return 'D3';
+        if (ratio < 0.85) return 'D4';
+        return 'D5';
+      })(),
+      vehicleHeadlightsOn: this.vehicleHeadlightsOn,
+      vehicleFuelPct: this.currentVehicle ? Math.round(this.vehicleFuelMap.get(this.currentVehicle.id) ?? 88) : 100,
+      vehicleAltitudeM: this.currentVehicle?.kind === 'chopper' ? Math.round(this.currentVehicle.y ?? 0) : 0,
       playerX: this.playerX,
       playerZ: this.playerZ,
       playerYaw: this.playerYaw,
       pointerLocked: this.pointerLocked,
       firstPerson: this.firstPerson,
+      cameraMode: this.cameraMode,
       adsActive: this.adsActive && !this.currentVehicle && this.activeWeapon !== 'fists',
       targetInCrosshair: this.targetInCrosshair,
       nearPrompt,
