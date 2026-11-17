@@ -230,6 +230,7 @@ export default function App() {
   }, []);
 
   const handleOpenShop = useCallback(() => {
+    engineRef.current?.setWeaponWheelOpen(false);
     setPhoneOpen(false);
     setMapOpen(false);
     setConfirmGunId(null);
@@ -245,6 +246,7 @@ export default function App() {
     setMapOpen((prev) => {
       const next = !prev;
       if (next) {
+        engineRef.current?.setWeaponWheelOpen(false);
         if (phoneOpen && !phoneMinimized) {
           setPhoneMinimized(true);
         }
@@ -425,6 +427,7 @@ export default function App() {
       } else if (e.code === kb.phone) {
         if (mode === 'PLAYING') {
           if (!phoneOpen || phoneMinimized) {
+            engineRef.current?.setWeaponWheelOpen(false);
             setMapOpen(false);
             setPhoneOpen(true);
             setPhoneMinimized(false);
@@ -442,6 +445,7 @@ export default function App() {
   }, [mode, shopOpen, confirmGunId, mapOpen, phoneOpen, phoneMinimized, handleOpenShop, settings.keybinds.shop, settings.keybinds.phone]);
 
   const handleOpenSettings = () => {
+    engineRef.current?.setWeaponWheelOpen(false);
     settingsOriginRef.current =
       mode === 'TITLE' ? 'TITLE' : mode === 'JAIL' || hud.jail?.active ? 'JAIL' : 'PLAYING';
     setShopOpen(false);
@@ -593,6 +597,7 @@ export default function App() {
           onOpenPhone={() => {
             setMapOpen(false);
             if (!phoneOpen || phoneMinimized) {
+              engineRef.current?.setWeaponWheelOpen(false);
               setPhoneOpen(true);
               setPhoneMinimized(false);
               engineRef.current?.releasePointerLock();
@@ -721,6 +726,7 @@ export default function App() {
           onOpenWheel={() => engineRef.current?.setWeaponWheelOpen(true)}
           onOpenPhone={() => {
             if (mode !== 'PLAYING') return;
+            engineRef.current?.setWeaponWheelOpen(false);
             engineRef.current?.releasePointerLock();
             setMapOpen(false);
             setPhoneOpen(true);
@@ -795,6 +801,10 @@ export default function App() {
           timeOfDay={hud.timeOfDay}
           bank={hud.bank}
           inVehicle={hud.inVehicle}
+          playerX={hud.playerX}
+          playerZ={hud.playerZ}
+          playerYaw={hud.playerYaw}
+          blips={hud.blips}
           firstPerson={hud.firstPerson}
           adsActive={hud.adsActive}
           waypoint={hud.waypoint}
@@ -819,6 +829,7 @@ export default function App() {
           onOpenFullSettings={handleOpenSettings}
           onOpenArmory={handleOpenShop}
           onOpenMap={() => {
+            engineRef.current?.setWeaponWheelOpen(false);
             setPhoneMinimized(true);
             setMapOpen(true);
           }}

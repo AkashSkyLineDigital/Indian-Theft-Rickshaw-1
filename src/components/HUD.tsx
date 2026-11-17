@@ -794,7 +794,7 @@ export const HUD: React.FC<HUDProps> = ({
               )}
 
             {/* Borderless Floating Vitals Cluster (No Outer Card Box) */}
-            <div className="w-[clamp(164px,42vw,230px)] flex flex-col items-end gap-1.5">
+            <div className="w-[clamp(176px,44vw,258px)] flex flex-col items-end gap-1.5">
               {/* Row 1: Crisp Saffron-Gold Cash & 5 Wanted Stars */}
               <div className="w-full flex items-center justify-end gap-2.5 drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
                 <span
@@ -888,66 +888,98 @@ export const HUD: React.FC<HUDProps> = ({
                 )}
               </div>
 
-              {/* Compact 1-5 Weapon Slot Strip + Medkit Pill */}
-              <div className="w-full flex items-center justify-end gap-1.5 pt-0.5 pointer-events-auto">
-                <div className="grid grid-cols-5 gap-1 flex-1">
-                  {WEAPON_ORDER.map((wid, idx) => {
-                    const owned = hud.ownedWeapons.includes(wid);
-                    const active = hud.activeWeapon === wid;
-                    const slotAction = `weapon${idx + 1}` as KeybindActionId;
-                    const keyLabel = formatKeyCode(keybinds[slotAction]);
-                    return (
-                      <button
-                        key={wid}
-                        type="button"
-                        disabled={!owned}
-                        onClick={() => onSelectWeapon(wid)}
-                        title={`${WEAPONS[wid].name} (${keyLabel})`}
-                        className={`h-6 rounded-full text-[10px] font-mono-num backdrop-blur-sm border transition-colors ${
-                          active
-                            ? 'bg-[#F59E0B] border-amber-200 text-[#0E1118] font-extrabold cursor-pointer shadow'
-                            : owned
-                              ? 'bg-black/30 hover:bg-black/50 border-white/15 text-slate-100 cursor-pointer'
-                              : 'bg-black/20 border-white/5 text-white/25 cursor-not-allowed'
+              {/* Dedicated Full-Width 5-Slot Weapon Bar (Uses onPointerDown + blur so it never steals focus or freezes) */}
+              <div className="w-full grid grid-cols-5 gap-1 pt-0.5 pointer-events-auto select-none">
+                {WEAPON_ORDER.map((wid, idx) => {
+                  const owned = hud.ownedWeapons.includes(wid);
+                  const active = hud.activeWeapon === wid;
+                  const slotAction = `weapon${idx + 1}` as KeybindActionId;
+                  const keyLabel = formatKeyCode(keybinds[slotAction]);
+                  const wAmmo = hud.ammo[wid] ?? 0;
+                  return (
+                    <button
+                      key={wid}
+                      type="button"
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        e.currentTarget.blur();
+                        onSelectWeapon(wid);
+                      }}
+                      title={
+                        owned
+                          ? `${WEAPONS[wid].name} (${keyLabel})`
+                          : `${WEAPONS[wid].name} — Locked (Visit Shastra Armory)`
+                      }
+                      className={`relative h-8 rounded-lg flex flex-col items-center justify-center px-0.5 backdrop-blur-sm border transition-all touch-none ${
+                        active
+                          ? 'bg-[#F59E0B] border-amber-200 text-[#0E1118] font-extrabold cursor-pointer shadow-[0_0_10px_rgba(245,158,11,0.45)]'
+                          : owned
+                            ? 'bg-black/45 hover:bg-black/65 border-white/20 text-slate-100 cursor-pointer active:scale-95'
+                            : 'bg-black/25 border-white/10 text-white/35 cursor-pointer opacity-70'
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 left-1 text-[8px] font-mono-num leading-none ${
+                          active ? 'text-[#0E1118]/80 font-extrabold' : 'text-slate-400'
                         }`}
                       >
                         {keyLabel}
-                      </button>
-                    );
-                  })}
+                      </span>
+                      <WeaponIcon weaponId={wid} className="w-6 h-3.5 mt-1" />
+                      {owned && wid !== 'fists' && (
+                        <span
+                          className={`text-[7.5px] font-mono-num leading-none ${
+                            active ? 'text-[#0E1118] font-bold' : 'text-amber-300/90'
+                          }`}
+                        >
+                          {wAmmo}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Clean Fixed-Height Active Weapon & Medkit Quick-Use Row */}
+              <div className="w-full flex items-center justify-between gap-1.5 text-[10px] font-mono-num pointer-events-auto">
+                <div className="flex items-center gap-1.5 min-w-0 drop-shadow-[0_2px_4px_rgba(0,0,0,0.95)]">
+                  <span className="font-semibold text-white truncate">{activeSpec.shortName}</span>
+                  <span className="text-[#FBBF24] font-bold shrink-0">
+                    {hud.activeWeapon === 'fists' ? 'MELEE' : `${hud.ammo[hud.activeWeapon]} RDS`}
+                  </span>
                 </div>
 
                 <button
                   type="button"
                   disabled={hud.medkits <= 0 || hud.hp >= hud.maxHp}
-                  onClick={onUseMedkit}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.currentTarget.blur();
+                    if (hud.medkits > 0 && hud.hp < hud.maxHp) {
+                      onUseMedkit();
+                    }
+                  }}
                   title={`Use Medkit (${formatKeyCode(keybinds.medkit)})`}
-                  className={`flex items-center gap-1 px-2 h-6 rounded-full text-[10px] font-mono-num font-bold backdrop-blur-sm border transition-colors shrink-0 ${
+                  className={`flex items-center gap-1 px-2 h-5 rounded-full text-[9.5px] font-mono-num font-bold backdrop-blur-sm border transition-colors shrink-0 ${
                     hud.medkits > 0 && hud.hp < hud.maxHp
                       ? 'bg-[#22C55E] hover:bg-emerald-400 border-emerald-200 text-[#0E1118] cursor-pointer'
-                      : 'bg-black/30 border-white/15 text-slate-200/80 cursor-default'
+                      : 'bg-black/35 border-white/15 text-slate-300/80 cursor-default'
                   }`}
                 >
-                  <HeartPulse className="w-3 h-3" />
+                  <HeartPulse className="w-2.5 h-2.5" />
                   <span>
                     {hud.medkits}/{MAX_MEDKITS}
                   </span>
                 </button>
               </div>
 
-              {/* Compact 1-line Weapon & Ammo Status (Expands briefly on weapon switch) */}
-              <div className="w-full flex items-center justify-between gap-2 text-[10px] font-mono-num drop-shadow-[0_2px_4px_rgba(0,0,0,0.95)]">
-                <span className="font-semibold text-white truncate">{activeSpec.shortName}</span>
-                <span className="text-[#FBBF24] font-bold shrink-0">
-                  {hud.activeWeapon === 'fists' ? 'MELEE' : `${hud.ammo[hud.activeWeapon]} RDS`}
-                </span>
-              </div>
-
               {weaponExpanded && (
-                <div className="w-full px-2 py-1 bg-black/35 backdrop-blur-sm border border-white/10 rounded-lg flex items-center justify-between gap-2">
+                <div className="w-full px-2 py-1 bg-black/45 backdrop-blur-sm border border-white/15 rounded-lg flex items-center justify-between gap-2">
                   <div className="flex flex-col gap-0.5 min-w-0">
-                    <span className="text-[9px] font-mono-num text-slate-200 truncate">
-                      {activeSpec.caliber}
+                    <span className="text-[9px] font-mono-num text-amber-200 truncate font-semibold">
+                      {activeSpec.caliber} · {activeSpec.scopeLabel}
                     </span>
                     <div className="flex items-center gap-1.5 text-[9px] font-mono-num font-bold drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
                       <span className={hud.hasGunLicense ? 'text-[#22C55E]' : 'text-slate-400'}>
@@ -967,7 +999,6 @@ export const HUD: React.FC<HUDProps> = ({
                       )}
                     </div>
                   </div>
-                  <WeaponIcon weaponId={hud.activeWeapon} className="w-12 h-6 shrink-0" />
                 </div>
               )}
             </div>
@@ -1122,6 +1153,7 @@ export const HUD: React.FC<HUDProps> = ({
               playerX={hud.playerX}
               playerZ={hud.playerZ}
               playerYaw={hud.playerYaw}
+              inVehicle={hud.inVehicle}
               wantedLevel={hud.wantedLevel}
               blips={hud.blips}
               routePoints={hud.mission.routePoints}

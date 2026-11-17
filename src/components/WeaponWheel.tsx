@@ -24,11 +24,13 @@ export const WeaponWheel: React.FC<WeaponWheelProps> = ({
     () => typeof document !== 'undefined' && Boolean(document.pointerLockElement),
   );
 
+  const initialWeaponRef = useRef<WeaponId>(activeWeapon);
   const hoveredRef = useRef<WeaponId>(activeWeapon);
   const ownedRef = useRef<WeaponId[]>(ownedWeapons);
   const onSelectRef = useRef(onSelect);
   const virtualRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const selectedByClickRef = useRef(false);
+  const hasMovedSliceRef = useRef(false);
 
   hoveredRef.current = hovered;
   ownedRef.current = ownedWeapons;
@@ -73,6 +75,9 @@ export const WeaponWheel: React.FC<WeaponWheelProps> = ({
       const index = Math.floor(((angle + slice / 2) % (Math.PI * 2)) / slice);
       const wid = WEAPON_ORDER[index];
       if (wid && ownedRef.current.includes(wid)) {
+        if (hoveredRef.current !== wid) {
+          hasMovedSliceRef.current = true;
+        }
         hoveredRef.current = wid;
         setHovered(wid);
       }
@@ -86,10 +91,15 @@ export const WeaponWheel: React.FC<WeaponWheelProps> = ({
     };
   }, []);
 
-  // Equip chosen weapon once when wheel closes/unmounts (Q released)
+  // Equip chosen weapon once when wheel closes/unmounts only if user actually changed slice
   useEffect(() => {
     return () => {
-      if (!selectedByClickRef.current && ownedRef.current.includes(hoveredRef.current)) {
+      if (
+        !selectedByClickRef.current &&
+        hasMovedSliceRef.current &&
+        hoveredRef.current !== initialWeaponRef.current &&
+        ownedRef.current.includes(hoveredRef.current)
+      ) {
         onSelectRef.current(hoveredRef.current);
       }
     };
@@ -101,8 +111,11 @@ export const WeaponWheel: React.FC<WeaponWheelProps> = ({
   return (
     <div
       className="fixed inset-0 z-20 flex items-center justify-center bg-[#06090F]/55 select-none p-2"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+      onPointerDown={(e) => {
+        if (e.target === e.currentTarget) {
+          e.preventDefault();
+          onClose();
+        }
       }}
     >
       <div className="relative w-[390px] h-[390px] flex items-center justify-center scale-[0.76] xs:scale-[0.88] sm:scale-100">
@@ -131,7 +144,7 @@ export const WeaponWheel: React.FC<WeaponWheelProps> = ({
               : `${ammo[hovered] ?? 0} RDS · ${spec.caliber}`}
           </div>
           <div className="text-[9px] text-slate-400 mt-1">
-            {isPointerLocked ? 'Move Mouse · Release Q' : 'Release Q or Click'}
+            {isPointerLocked ? 'Move Mouse · Release Q' : 'Tap Slot or Release Q'}
           </div>
         </div>
 
@@ -150,11 +163,15 @@ export const WeaponWheel: React.FC<WeaponWheelProps> = ({
               type="button"
               onMouseEnter={() => {
                 if (owned) {
+                  if (hoveredRef.current !== wid) hasMovedSliceRef.current = true;
                   hoveredRef.current = wid;
                   setHovered(wid);
                 }
               }}
-              onClick={() => {
+              onPointerDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                e.currentTarget.blur();
                 if (!owned) return;
                 selectedByClickRef.current = true;
                 hoveredRef.current = wid;

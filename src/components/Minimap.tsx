@@ -11,6 +11,7 @@ interface MinimapProps {
   playerX: number;
   playerZ: number;
   playerYaw: number;
+  inVehicle?: boolean;
   wantedLevel: number;
   blips: MinimapBlip[];
   routePoints?: { x: number; z: number }[];
@@ -22,6 +23,7 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
   playerX,
   playerZ,
   playerYaw,
+  inVehicle = false,
   wantedLevel,
   blips,
   routePoints,
@@ -38,30 +40,88 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
 
     const size = canvas.width;
     const half = size / 2;
-    const scale = 1.25; // pixels per world meter
+    const scale = inVehicle ? 1.08 : 1.28; // Slightly wider zoom when driving for earlier turn awareness
+
+    // When seated inside a vehicle, activate Heading-Up Satnav rotation (+playerYaw)
+    // so left/right turns rotate the world around the car's nose.
+    const mapRot = inVehicle ? playerYaw : 0;
+    const cosR = Math.cos(mapRot);
+    const sinR = Math.sin(mapRot);
+
+    // Helper: world (x, z) -> canvas (cx, cy)
+    const toCanvas = (wx: number, wz: number): [number, number] => {
+      const dx = (wx - playerX) * scale;
+      const dz = (wz - playerZ) * scale;
+      return [
+        half + (dx * cosR - dz * sinR),
+        half + (dx * sinR + dz * cosR),
+      ];
+    };
 
     // Deep tactical asphalt background
     ctx.fillStyle = '#0f141e';
     ctx.fillRect(0, 0, size, size);
 
-    // Helper: world (x, z) -> canvas (cx, cy) with North (-Z) UP and East (+X) RIGHT
-    const toCanvas = (wx: number, wz: number): [number, number] => [
+    // Rotated layer for grid blocks, roads, chowks, and GPS routes
+    ctx.save();
+    if (mapRot !== 0) {
+      ctx.translate(half, half);
+      ctx.rotate(mapRot);
+      ctx.translate(-half, -half);
+    }
+
+    const toLocal = (wx: number, wz: number): [number, number] => [
       half + (wx - playerX) * scale,
       half + (wz - playerZ) * scale,
     ];
 
-    // City blocks (downtown & outer residential colonies)
+    const cullBound = size * 0.88; // Generous cull radius for rotated view
+
+    // City blocks
     ctx.strokeStyle = '#293347';
     ctx.lineWidth = 1;
     for (const bx of CITY_BLOCK_CENTERS) {
       for (const bz of CITY_BLOCK_CENTERS) {
-        const [cx, cy] = toCanvas(bx, bz);
+        const [cx, cy] = toLocal(bx, bz);
         const bw = 42 * scale;
-        if (cx + bw / 2 < -4 || cx - bw / 2 > size + 4 || cy + bw / 2 < -4 || cy - bw / 2 > size + 4) {
+        if (
+          cx + bw / 2 < half - cullBound ||
+          cx - bw / 2 > half + cullBound ||
+          cy + bw / 2 < half - cullBound ||
+          cy - bw / 2 > half + cullBound
+        ) {
           continue;
         }
         const isColony = Math.abs(bx) >= 150 || Math.abs(bz) >= 150;
-        ctx.fillStyle = isColony ? '#17202e' : '#1b2230';
+        let fill = isColony ? '#17202e' : '#1b2230';
+        let stroke = '#293347';
+        if (bx === -150 && bz === 150) {
+          fill = '#2a1820';
+          stroke = '#ef4444';
+        } else if (bx === -30 && bz === 30) {
+          fill = '#2d1822';
+          stroke = '#f43f5e';
+        } else if (bx === -30 && bz === -90) {
+          fill = '#132d38';
+          stroke = '#0ea5e9';
+        } else if (bx === 30 && bz === -30) {
+          fill = '#2c2214';
+          stroke = '#f59e0b';
+        } else if (bx === 30 && bz === 90) {
+          fill = '#2b2415';
+          stroke = '#fbbf24';
+        } else if (bx === -90 && bz === 90) {
+          fill = '#251a3a';
+          stroke = '#a855f7';
+        } else if (bx === -90 && bz === -30) {
+          fill = '#122e26';
+          stroke = '#10b981';
+        } else if (bx === 30 && bz === 30) {
+          fill = '#2e1d12';
+          stroke = '#f97316';
+        }
+        ctx.fillStyle = fill;
+        ctx.strokeStyle = stroke;
         ctx.fillRect(cx - bw / 2, cy - bw / 2, bw, bw);
         ctx.strokeRect(cx - bw / 2, cy - bw / 2, bw, bw);
       }
@@ -72,19 +132,19 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 4]);
     for (const rc of CITY_ROAD_CENTERS) {
-      const [rx] = toCanvas(rc, 0);
-      if (rx >= -4 && rx <= size + 4) {
+      const [rx] = toLocal(rc, 0);
+      if (rx >= half - cullBound && rx <= half + cullBound) {
         ctx.beginPath();
-        ctx.moveTo(rx, 0);
-        ctx.lineTo(rx, size);
+        ctx.moveTo(rx, half - cullBound);
+        ctx.lineTo(rx, half + cullBound);
         ctx.stroke();
       }
 
-      const [, ry] = toCanvas(0, rc);
-      if (ry >= -4 && ry <= size + 4) {
+      const [, ry] = toLocal(0, rc);
+      if (ry >= half - cullBound && ry <= half + cullBound) {
         ctx.beginPath();
-        ctx.moveTo(0, ry);
-        ctx.lineTo(size, ry);
+        ctx.moveTo(half - cullBound, ry);
+        ctx.lineTo(half + cullBound, ry);
         ctx.stroke();
       }
     }
@@ -92,9 +152,16 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
 
     // Chowk roundabouts
     for (const chowk of CHOWK_ROUNDABOUTS) {
-      const [rx, ry] = toCanvas(chowk.x, chowk.z);
+      const [rx, ry] = toLocal(chowk.x, chowk.z);
       const rPx = Math.max(3, chowk.radius * scale);
-      if (rx + rPx < -4 || rx - rPx > size + 4 || ry + rPx < -4 || ry - rPx > size + 4) continue;
+      if (
+        rx + rPx < half - cullBound ||
+        rx - rPx > half + cullBound ||
+        ry + rPx < half - cullBound ||
+        ry - rPx > half + cullBound
+      ) {
+        continue;
+      }
       ctx.fillStyle = '#243042';
       ctx.strokeStyle = '#d97706';
       ctx.lineWidth = 1.2;
@@ -112,7 +179,7 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
       ctx.lineJoin = 'round';
       ctx.beginPath();
       routePoints.forEach((pt, idx) => {
-        const [rx, ry] = toCanvas(pt.x, pt.z);
+        const [rx, ry] = toLocal(pt.x, pt.z);
         if (idx === 0) ctx.moveTo(rx, ry);
         else ctx.lineTo(rx, ry);
       });
@@ -123,13 +190,13 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
     // Active Custom/Preset GPS Waypoint Polyline (Glowing Amber Halo + Dashed Core)
     if (waypoint?.active && waypoint.routePoints.length >= 2) {
       ctx.save();
-      ctx.strokeStyle = 'rgba(251, 191, 36, 0.30)';
+      ctx.strokeStyle = 'rgba(251, 191, 36, 0.34)';
       ctx.lineWidth = 6.5;
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       ctx.beginPath();
       waypoint.routePoints.forEach((pt, idx) => {
-        const [rx, ry] = toCanvas(pt.x, pt.z);
+        const [rx, ry] = toLocal(pt.x, pt.z);
         if (idx === 0) ctx.moveTo(rx, ry);
         else ctx.lineTo(rx, ry);
       });
@@ -140,7 +207,7 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
       ctx.setLineDash([5, 3]);
       ctx.beginPath();
       waypoint.routePoints.forEach((pt, idx) => {
-        const [rx, ry] = toCanvas(pt.x, pt.z);
+        const [rx, ry] = toLocal(pt.x, pt.z);
         if (idx === 0) ctx.moveTo(rx, ry);
         else ctx.lineTo(rx, ry);
       });
@@ -149,7 +216,9 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
       ctx.restore();
     }
 
-    // Blips
+    ctx.restore(); // End rotated ground layer — blips & arrows below render upright!
+
+    // Blips (drawn upright at rotated screen coordinates)
     for (const b of blips) {
       const [bx, by] = toCanvas(b.x, b.z);
       if (bx < -10 || bx > size + 10 || by < -10 || by > size + 10) continue;
@@ -162,14 +231,14 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
               ? '#facc15'
               : '#ef4444';
         ctx.fillStyle = '#0b0e14';
-        ctx.fillRect(bx - 4, by - 4, 8, 8);
+        ctx.fillRect(bx - 3.5, by - 3.5, 7, 7);
         ctx.fillStyle = col;
         ctx.beginPath();
-        ctx.arc(bx, by, 2.7, 0, Math.PI * 2);
+        ctx.arc(bx, by, 2.4, 0, Math.PI * 2);
         ctx.fill();
       } else if (b.type === 'gunshop') {
         ctx.fillStyle = '#f59e0b';
-        ctx.fillRect(bx - 5, by - 5, 10, 10);
+        ctx.fillRect(bx - 5.5, by - 5.5, 11, 11);
         ctx.fillStyle = '#0b0e14';
         ctx.font = 'bold 8px sans-serif';
         ctx.textAlign = 'center';
@@ -177,7 +246,7 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
         ctx.fillText('G', bx, by + 0.5);
       } else if (b.type === 'hospital') {
         ctx.fillStyle = '#dc2626';
-        ctx.fillRect(bx - 5, by - 5, 10, 10);
+        ctx.fillRect(bx - 5.5, by - 5.5, 11, 11);
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 9px sans-serif';
         ctx.textAlign = 'center';
@@ -185,7 +254,7 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
         ctx.fillText('+', bx, by + 0.5);
       } else if (b.type === 'bank') {
         ctx.fillStyle = '#0ea5e9';
-        ctx.fillRect(bx - 5, by - 5, 10, 10);
+        ctx.fillRect(bx - 5.5, by - 5.5, 11, 11);
         ctx.fillStyle = '#0b0e14';
         ctx.font = 'bold 8px sans-serif';
         ctx.textAlign = 'center';
@@ -201,7 +270,7 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
         ctx.fillText('₹', bx, by + 0.5);
       } else if (b.type === 'rescue_van') {
         ctx.fillStyle = '#10b981';
-        ctx.fillRect(bx - 5, by - 5, 10, 10);
+        ctx.fillRect(bx - 5.5, by - 5.5, 11, 11);
         ctx.fillStyle = '#0b0e14';
         ctx.font = 'bold 8px sans-serif';
         ctx.textAlign = 'center';
@@ -233,7 +302,7 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
         ctx.fillText('P', bx, by + 0.5);
       } else if (b.type === 'temple') {
         ctx.fillStyle = '#f97316';
-        ctx.fillRect(bx - 5, by - 5, 10, 10);
+        ctx.fillRect(bx - 5.5, by - 5.5, 11, 11);
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 9px sans-serif';
         ctx.textAlign = 'center';
@@ -241,7 +310,7 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
         ctx.fillText('ॐ', bx, by + 0.5);
       } else if (b.type === 'mosque') {
         ctx.fillStyle = '#059669';
-        ctx.fillRect(bx - 5, by - 5, 10, 10);
+        ctx.fillRect(bx - 5.5, by - 5.5, 11, 11);
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 9px sans-serif';
         ctx.textAlign = 'center';
@@ -265,7 +334,7 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
         ctx.fill();
       } else if (b.type === 'dm_office') {
         ctx.fillStyle = '#7c3aed';
-        ctx.fillRect(bx - 5, by - 5, 10, 10);
+        ctx.fillRect(bx - 5.5, by - 5.5, 11, 11);
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 8px sans-serif';
         ctx.textAlign = 'center';
@@ -273,7 +342,7 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
         ctx.fillText('L', bx, by + 0.5);
       } else if (b.type === 'court') {
         ctx.fillStyle = '#a855f7';
-        ctx.fillRect(bx - 5, by - 5, 10, 10);
+        ctx.fillRect(bx - 5.5, by - 5.5, 11, 11);
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 8px sans-serif';
         ctx.textAlign = 'center';
@@ -283,8 +352,8 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
         ctx.fillStyle = '#1e293b';
         ctx.strokeStyle = '#ef4444';
         ctx.lineWidth = 1.2;
-        ctx.fillRect(bx - 5, by - 5, 10, 10);
-        ctx.strokeRect(bx - 5, by - 5, 10, 10);
+        ctx.fillRect(bx - 5.5, by - 5.5, 11, 11);
+        ctx.strokeRect(bx - 5.5, by - 5.5, 11, 11);
         ctx.fillStyle = '#fca5a5';
         ctx.font = 'bold 8px sans-serif';
         ctx.textAlign = 'center';
@@ -336,27 +405,36 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
         ctx.fill();
       } else if (b.type === 'vehicle') {
         ctx.fillStyle = '#94a3b8';
-        ctx.fillRect(bx - 2.5, by - 2.5, 5, 5);
+        ctx.fillRect(bx - 2.3, by - 2.3, 4.6, 4.6);
       } else if (b.type === 'enforcer') {
         ctx.fillStyle = '#f97316';
         ctx.beginPath();
         ctx.arc(bx, by, 2.2, 0, Math.PI * 2);
         ctx.fill();
       } else {
-        ctx.fillStyle = 'rgba(203, 213, 225, 0.5)';
+        ctx.fillStyle = 'rgba(203, 213, 225, 0.42)';
         ctx.beginPath();
-        ctx.arc(bx, by, 1.8, 0, Math.PI * 2);
+        ctx.arc(bx, by, 1.6, 0, Math.PI * 2);
         ctx.fill();
       }
     }
 
-    // Waypoint destination marker (clamped to radar edge with glow ring if distant)
+    // Waypoint destination marker (clamped cleanly to radar border with directional arrow if distant)
     if (waypoint?.active) {
       const [wxRaw, wyRaw] = toCanvas(waypoint.x, waypoint.z);
-      const wx = Math.max(10, Math.min(size - 10, wxRaw));
-      const wy = Math.max(10, Math.min(size - 10, wyRaw));
+      const margin = 12;
+      const offScreen =
+        wxRaw < margin || wxRaw > size - margin || wyRaw < margin || wyRaw > size - margin;
+      const dx = wxRaw - half;
+      const dy = wyRaw - half;
+      const edgeScale = offScreen
+        ? (half - margin) / Math.max(Math.abs(dx), Math.abs(dy), 1)
+        : 1;
+      const wx = offScreen ? half + dx * edgeScale : wxRaw;
+      const wy = offScreen ? half + dy * edgeScale : wyRaw;
+
       ctx.save();
-      ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.9)';
       ctx.lineWidth = 1.8;
       ctx.beginPath();
       ctx.arc(wx, wy, 7.5, 0, Math.PI * 2);
@@ -366,51 +444,95 @@ export const Minimap: React.FC<MinimapProps> = React.memo(({
       ctx.strokeStyle = '#0b0e14';
       ctx.lineWidth = 1.6;
       ctx.beginPath();
-      ctx.arc(wx, wy, 4.4, 0, Math.PI * 2);
+      ctx.arc(wx, wy, 4.6, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
+
+      if (offScreen) {
+        const ang = Math.atan2(dy, dx);
+        ctx.translate(wx, wy);
+        ctx.rotate(ang);
+        ctx.fillStyle = '#38bdf8';
+        ctx.beginPath();
+        ctx.moveTo(11, 0);
+        ctx.lineTo(5, -3.5);
+        ctx.lineTo(5, 3.5);
+        ctx.closePath();
+        ctx.fill();
+      }
       ctx.restore();
     }
 
-    // Player directional arrow at center.
+    // Dynamic Compass North Indicator inside canvas when in Heading-Up Vehicle Mode
+    if (inVehicle) {
+      const rEdge = half - 14;
+      const nx = half + Math.sin(playerYaw) * rEdge;
+      const ny = half - Math.cos(playerYaw) * rEdge;
+      ctx.save();
+      ctx.fillStyle = 'rgba(11, 14, 20, 0.88)';
+      ctx.strokeStyle = 'rgba(239, 68, 68, 0.85)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(nx, ny, 7.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#fca5a5';
+      ctx.font = 'bold 8px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('N', nx, ny + 0.5);
+      ctx.restore();
+    }
+
+    // Player / Vehicle directional arrow at center:
+    // Points straight UP in vehicle Heading-Up mode, or rotates by -playerYaw on foot.
     ctx.save();
     ctx.translate(half, half);
-    ctx.rotate(-playerYaw);
+    if (!inVehicle) {
+      ctx.rotate(-playerYaw);
+    }
 
-    ctx.fillStyle = 'rgba(245, 158, 11, 0.14)';
+    ctx.fillStyle = inVehicle ? 'rgba(56, 189, 248, 0.18)' : 'rgba(245, 158, 11, 0.14)';
     ctx.beginPath();
     ctx.moveTo(0, 0);
-    ctx.lineTo(-14, -32);
-    ctx.lineTo(14, -32);
+    ctx.lineTo(-15, -34);
+    ctx.lineTo(15, -34);
     ctx.closePath();
     ctx.fill();
 
-    ctx.fillStyle = '#f59e0b';
+    ctx.fillStyle = inVehicle ? '#38bdf8' : '#f59e0b';
     ctx.strokeStyle = '#0b0e14';
     ctx.lineWidth = 1.6;
     ctx.beginPath();
-    ctx.moveTo(0, -9);
-    ctx.lineTo(6.5, 7);
+    ctx.moveTo(0, -10);
+    ctx.lineTo(6.8, 7);
     ctx.lineTo(0, 3.5);
-    ctx.lineTo(-6.5, 7);
+    ctx.lineTo(-6.8, 7);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
 
     ctx.restore();
-  }, [playerX, playerZ, playerYaw, wantedLevel, blips, routePoints, waypoint]);
+  }, [playerX, playerZ, playerYaw, inVehicle, wantedLevel, blips, routePoints, waypoint]);
 
   return (
     <button
       type="button"
       onClick={onExpand}
       title="Open Full City Map (M)"
-      className="relative w-[clamp(74px,min(22vw,24vh),156px)] h-[clamp(74px,min(22vw,24vh),156px)] rounded-xl bg-[rgba(14,17,24,0.65)] border border-white/[0.16] hover:border-amber-400/70 shadow-xl overflow-hidden pointer-events-auto cursor-pointer text-left block transition-colors"
+      className="relative w-[clamp(78px,min(23vw,24vh),160px)] h-[clamp(78px,min(23vw,24vh),160px)] rounded-xl bg-[rgba(14,17,24,0.65)] border border-white/[0.16] hover:border-amber-400/70 shadow-xl overflow-hidden pointer-events-auto cursor-pointer text-left block transition-colors"
     >
       <canvas ref={canvasRef} width={176} height={176} className="block w-full h-full opacity-95" />
-      <div className="absolute top-1 left-1/2 -translate-x-1/2 px-1.5 rounded bg-black/50 text-[clamp(8px,1.6vw,10px)] font-display font-bold tracking-wider text-[#FBBF24] hud-text-shadow">
-        N
-      </div>
+      {!inVehicle && (
+        <div className="absolute top-1 left-1/2 -translate-x-1/2 px-1.5 rounded bg-black/50 text-[clamp(8px,1.6vw,10px)] font-display font-bold tracking-wider text-[#FBBF24] hud-text-shadow">
+          N
+        </div>
+      )}
+      {inVehicle && (
+        <div className="absolute top-1 left-1 px-1.5 rounded bg-sky-950/85 border border-sky-400/40 text-[clamp(7px,1.4vw,8.5px)] font-mono-num font-bold tracking-wider text-sky-300 hud-text-shadow">
+          SATNAV
+        </div>
+      )}
       <div className="absolute top-1 right-1 px-1.5 rounded bg-black/50 text-[clamp(7px,1.5vw,9px)] font-mono-num font-bold text-[#38BDF8] hud-text-shadow">
         MAP
       </div>

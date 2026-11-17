@@ -18,10 +18,12 @@ import {
   HeartPulse,
   Landmark,
   Map as MapIcon,
+  Maximize2,
   MessageCircle,
   Mic,
   Minus,
   Music2,
+  Navigation,
   Newspaper,
   Phone,
   PhoneCall,
@@ -29,6 +31,7 @@ import {
   PhoneOff,
   Play,
   Radio,
+  Search,
   Send,
   Settings,
   ShieldAlert,
@@ -41,16 +44,22 @@ import {
   Volume2,
   VolumeX,
   X,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { soundEngine } from '../engine/audio';
 import {
   BRIBE_PRICE_INR,
   BankAccountHudState,
+  CHOWK_ROUNDABOUTS,
+  CITY_BLOCK_CENTERS,
   CITY_LOCATIONS,
+  CITY_ROAD_CENTERS,
   ChaiDialoguePrompt,
   GameSettings,
   MAX_MEDKITS,
   MicHudState,
+  MinimapBlip,
   PoliceInspectionHud,
   STREET_BRIBE_INR,
   TimeOfDayHud,
@@ -73,6 +82,10 @@ interface InGamePhoneProps {
   timeOfDay: TimeOfDayHud;
   bank: BankAccountHudState;
   inVehicle: boolean;
+  playerX?: number;
+  playerZ?: number;
+  playerYaw?: number;
+  blips?: MinimapBlip[];
   firstPerson: boolean;
   adsActive: boolean;
   waypoint: WaypointHudState | null;
@@ -126,6 +139,7 @@ type PhoneApp =
   | 'bharatbook'
   | 'bank'
   | 'gps'
+  | 'map'
   | 'cheats';
 
 type TubeCategory = 'dev' | 'lofi';
@@ -332,6 +346,10 @@ export const InGamePhone: React.FC<InGamePhoneProps> = ({
   timeOfDay,
   bank,
   inVehicle,
+  playerX = 0,
+  playerZ = 0,
+  playerYaw = 0,
+  blips = [],
   firstPerson,
   adsActive,
   waypoint,
@@ -373,6 +391,21 @@ export const InGamePhone: React.FC<InGamePhoneProps> = ({
   onClose,
 }) => {
   const [app, setApp] = useState<PhoneApp>('home');
+  const [mapSearch, setMapSearch] = useState('');
+  const [mapZoom, setMapZoom] = useState(1.25);
+  const [mapPan, setMapPan] = useState<{ x: number; z: number }>({ x: playerX, z: playerZ });
+  const [mapFollowCar, setMapFollowCar] = useState(inVehicle);
+  const phoneMapCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const phoneMapTargetsRef = useRef<
+    { label: string; wx: number; wz: number; sx: number; sy: number; hitR: number }[]
+  >([]);
+  const phoneMapDragRef = useRef<{
+    active: boolean;
+    pointerId: number;
+    lastX: number;
+    lastY: number;
+    movedPx: number;
+  }>({ active: false, pointerId: -1, lastX: 0, lastY: 0, movedPx: 0 });
 
   // BharatTube state (persists while phone is minimized)
   const [tubeCategory, setTubeCategory] = useState<TubeCategory>('dev');
@@ -541,6 +574,396 @@ export const InGamePhone: React.FC<InGamePhoneProps> = ({
       }
     };
   }, []);
+
+  // Draw live interactive BHARAT MAPS canvas inside the Phone Screen
+  useEffect(() => {
+    if (minimized || app !== 'map') return;
+    const canvas = phoneMapCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const w = canvas.width;
+    const h = canvas.height;
+    const cx = w / 2;
+    const cy = h / 2;
+    const scale = ((w - 16) / 560) * mapZoom;
+    const rot = mapFollowCar ? playerYaw : 0;
+    const cosR = Math.cos(rot);
+    const sinR = Math.sin(rot);
+    const center = mapFollowCar ? { x: playerX, z: playerZ } : mapPan;
+
+    const toLocal = (wx: number, wz: number): [number, number] => [
+      cx + (wx - center.x) * scale,
+      cy + (wz - center.z) * scale,
+    ];
+    const toCanvas = (wx: number, wz: number): [number, number] => {
+      const dx = (wx - center.x) * scale;
+      const dz = (wz - center.z) * scale;
+      return [cx + dx * cosR - dz * sinR, cy + dx * sinR + dz * cosR];
+    };
+
+    // Deep slate canvas background
+    ctx.fillStyle = '#080c14';
+    ctx.fillRect(0, 0, w, h);
+
+    // Rotated ground layer (roads, blocks, footprints, chowks, GPS route)
+    ctx.save();
+    if (rot !== 0) {
+      ctx.translate(cx, cy);
+      ctx.rotate(rot);
+      ctx.translate(-cx, -cy);
+    }
+
+    // Road corridors
+    ctx.fillStyle = '#121927';
+    for (const rc of CITY_ROAD_CENTERS) {
+      const [rx] = toLocal(rc, 0);
+      const [, ry] = toLocal(0, rc);
+      const roadW = Math.max(3, 14 * scale);
+      ctx.fillRect(rx - roadW / 2, -h, roadW, h * 3);
+      ctx.fillRect(-w, ry - roadW / 2, w * 3, roadW);
+    }
+
+    // Road centerlines
+    ctx.strokeStyle = 'rgba(245, 158, 11, 0.25)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    for (const rc of CITY_ROAD_CENTERS) {
+      const [rx] = toLocal(rc, 0);
+      const [, ry] = toLocal(0, rc);
+      ctx.beginPath();
+      ctx.moveTo(rx, -h);
+      ctx.lineTo(rx, h * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-w, ry);
+      ctx.lineTo(w * 2, ry);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    // Base city blocks
+    for (const bx of CITY_BLOCK_CENTERS) {
+      for (const bz of CITY_BLOCK_CENTERS) {
+        const [lx, ly] = toLocal(bx, bz);
+        const bw = 42 * scale;
+        const isColony = Math.abs(bx) >= 150 || Math.abs(bz) >= 150;
+        ctx.fillStyle = isColony ? '#151e2c' : '#182131';
+        ctx.strokeStyle = '#263246';
+        ctx.lineWidth = 0.8;
+        ctx.fillRect(lx - bw / 2, ly - bw / 2, bw, bw);
+        ctx.strokeRect(lx - bw / 2, ly - bw / 2, bw, bw);
+      }
+    }
+
+    // Sized landmark building footprints
+    const landmarkShapes: {
+      bx: number;
+      bz: number;
+      bw: number;
+      bd: number;
+      fill: string;
+      stroke: string;
+    }[] = [
+      { bx: 30, bz: 90, bw: 35, bd: 35, fill: '#4a3816', stroke: '#fbbf24' },
+      { bx: 30, bz: -30, bw: 34, bd: 32, fill: '#4c3214', stroke: '#f59e0b' },
+      { bx: -30, bz: -90, bw: 38, bd: 34, fill: '#123e4a', stroke: '#0ea5e9' },
+      { bx: -30, bz: 30, bw: 40, bd: 38, fill: '#4e1d26', stroke: '#ef4444' },
+      { bx: 30, bz: 30, bw: 36, bd: 34, fill: '#522c14', stroke: '#f97316' },
+      { bx: 90, bz: -30, bw: 35, bd: 33, fill: '#523815', stroke: '#fb923c' },
+      { bx: -90, bz: -30, bw: 36, bd: 34, fill: '#134234', stroke: '#10b981' },
+      { bx: -90, bz: 30, bw: 36, bd: 34, fill: '#2c224d', stroke: '#8b5cf6' },
+      { bx: -90, bz: 90, bw: 40, bd: 38, fill: '#382154', stroke: '#a855f7' },
+      { bx: -150, bz: 150, bw: 42, bd: 42, fill: '#291b22', stroke: '#ef4444' },
+      { bx: 90, bz: 30, bw: 36, bd: 34, fill: '#1e3a3a', stroke: '#2dd4bf' },
+      { bx: -210, bz: 30, bw: 40, bd: 36, fill: '#243044', stroke: '#60a5fa' },
+      { bx: 210, bz: -30, bw: 40, bd: 36, fill: '#243044', stroke: '#60a5fa' },
+    ];
+    for (const lm of landmarkShapes) {
+      const [lx, ly] = toLocal(lm.bx, lm.bz);
+      const sw = lm.bw * scale;
+      const sd = lm.bd * scale;
+      ctx.fillStyle = lm.fill;
+      ctx.strokeStyle = lm.stroke;
+      ctx.lineWidth = 1.2;
+      ctx.fillRect(lx - sw / 2, ly - sd / 2, sw, sd);
+      ctx.strokeRect(lx - sw / 2, ly - sd / 2, sw, sd);
+    }
+
+    // Chowk roundabouts
+    for (const chowk of CHOWK_ROUNDABOUTS) {
+      const [rx, ry] = toLocal(chowk.x, chowk.z);
+      const rPx = Math.max(3, chowk.radius * scale);
+      ctx.fillStyle = '#223044';
+      ctx.strokeStyle = '#d97706';
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.arc(rx, ry, rPx, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    // Active GPS Waypoint Route Polyline
+    if (waypoint?.active && waypoint.routePoints.length >= 2) {
+      ctx.strokeStyle = 'rgba(251, 191, 36, 0.32)';
+      ctx.lineWidth = 6;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      waypoint.routePoints.forEach((pt, idx) => {
+        const [rx, ry] = toLocal(pt.x, pt.z);
+        if (idx === 0) ctx.moveTo(rx, ry);
+        else ctx.lineTo(rx, ry);
+      });
+      ctx.stroke();
+
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 2.4;
+      ctx.setLineDash([5, 3]);
+      ctx.beginPath();
+      waypoint.routePoints.forEach((pt, idx) => {
+        const [rx, ry] = toLocal(pt.x, pt.z);
+        if (idx === 0) ctx.moveTo(rx, ry);
+        else ctx.lineTo(rx, ry);
+      });
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    ctx.restore(); // End rotated ground layer
+
+    // Subtle vehicle/police blips for live traffic context
+    for (const b of blips) {
+      if (b.type !== 'police_car' && b.type !== 'vehicle' && b.type !== 'chopper' && b.type !== 'rescue_van') {
+        continue;
+      }
+      const [bx, by] = toCanvas(b.x, b.z);
+      if (bx < -8 || bx > w + 8 || by < -8 || by > h + 8) continue;
+      if (b.type === 'police_car') {
+        ctx.fillStyle = wantedLevel > 0 ? '#ef4444' : '#38bdf8';
+        ctx.fillRect(bx - 2.2, by - 2.2, 4.4, 4.4);
+      } else if (b.type === 'chopper') {
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(bx, by, 3.5, 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (b.type === 'rescue_van') {
+        ctx.fillStyle = '#10b981';
+        ctx.fillRect(bx - 2.5, by - 2.5, 5, 5);
+      } else {
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.55)';
+        ctx.fillRect(bx - 1.5, by - 1.5, 3, 3);
+      }
+    }
+
+    // Populate interactive hit-targets & draw upright landmark pins
+    const targets: { label: string; wx: number; wz: number; sx: number; sy: number; hitR: number }[] = [];
+    const pinEntries: {
+      id: string;
+      label: string;
+      shortLabel: string;
+      x: number;
+      z: number;
+      badge: string;
+      bg: string;
+      fg: string;
+      priority: number;
+    }[] = [
+      {
+        id: 'home',
+        label: houseName ? `${houseName} (Home)` : 'Shanti Niwas (Home)',
+        shortLabel: 'Home',
+        x: homePos.x,
+        z: homePos.z,
+        badge: 'H',
+        bg: '#fbbf24',
+        fg: '#0b0e14',
+        priority: 3,
+      },
+      ...CITY_LOCATIONS.map((loc) => {
+        const bgMap: Record<string, { bg: string; fg: string; shortLabel: string; priority: number }> = {
+          'central-chowk': { bg: '#f59e0b', fg: '#0b0e14', shortLabel: 'Chowk', priority: 3 },
+          'ram-mandir': { bg: '#f97316', fg: '#ffffff', shortLabel: 'Mandir', priority: 2 },
+          'krishna-mandir': { bg: '#fb923c', fg: '#ffffff', shortLabel: 'Krishna', priority: 1 },
+          'noor-masjid': { bg: '#10b981', fg: '#ffffff', shortLabel: 'Masjid', priority: 2 },
+          'royal-bank': { bg: '#0ea5e9', fg: '#0b0e14', shortLabel: 'Bank', priority: 3 },
+          'dm-office': { bg: '#8b5cf6', fg: '#ffffff', shortLabel: 'RTO', priority: 2 },
+          'district-court': { bg: '#a855f7', fg: '#ffffff', shortLabel: 'Court', priority: 2 },
+          'central-jail': { bg: '#ef4444', fg: '#ffffff', shortLabel: 'Jail', priority: 3 },
+          'pankaj-armory': { bg: '#f59e0b', fg: '#0b0e14', shortLabel: 'Guns', priority: 3 },
+          hospital: { bg: '#dc2626', fg: '#ffffff', shortLabel: 'Hosp', priority: 3 },
+          'auto-stand': { bg: '#eab308', fg: '#0b0e14', shortLabel: 'Auto', priority: 1 },
+          'chai-chowk': { bg: '#d97706', fg: '#ffffff', shortLabel: 'Chai', priority: 1 },
+          'golgappa-chowk': { bg: '#e11d48', fg: '#ffffff', shortLabel: 'Chaat', priority: 1 },
+          'laxmi-medical': { bg: '#2dd4bf', fg: '#0b0e14', shortLabel: 'Kirana', priority: 2 },
+          'ganga-dhaba': { bg: '#ea580c', fg: '#ffffff', shortLabel: 'Dhaba', priority: 2 },
+          'azad-nagar': { bg: '#60a5fa', fg: '#0b0e14', shortLabel: 'Azad', priority: 2 },
+          'shanti-vihar': { bg: '#60a5fa', fg: '#0b0e14', shortLabel: 'Shanti', priority: 2 },
+        };
+        const meta = bgMap[loc.id] ?? { bg: '#38bdf8', fg: '#0b0e14', shortLabel: loc.label, priority: 1 };
+        return {
+          id: loc.id,
+          label: loc.label,
+          shortLabel: meta.shortLabel,
+          x: loc.x,
+          z: loc.z,
+          badge: loc.badge,
+          bg: meta.bg,
+          fg: meta.fg,
+          priority: meta.priority,
+        };
+      }),
+    ];
+
+    for (const p of pinEntries) {
+      const [sx, sy] = toCanvas(p.x, p.z);
+      if (sx < -16 || sx > w + 16 || sy < -16 || sy > h + 16) continue;
+      targets.push({ label: p.label, wx: p.x, wz: p.z, sx, sy, hitR: 14 });
+      const isSelected = waypoint?.active && waypoint.label === p.label;
+      if (p.priority === 1 && mapZoom < 1.15 && !isSelected) continue;
+
+      const r = isSelected ? 7.5 : 6;
+      ctx.fillStyle = p.bg;
+      ctx.strokeStyle = isSelected ? '#ffffff' : '#0b0e14';
+      ctx.lineWidth = isSelected ? 2 : 1.2;
+      ctx.beginPath();
+      ctx.arc(sx, sy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = p.fg;
+      ctx.font = 'bold 7.5px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(p.badge, sx, sy + 0.5);
+
+      if (p.priority >= 2 || mapZoom >= 1.35 || isSelected) {
+        ctx.font = 'bold 7.5px sans-serif';
+        const tw = ctx.measureText(p.shortLabel).width;
+        ctx.fillStyle = 'rgba(8, 12, 20, 0.78)';
+        ctx.fillRect(sx - tw / 2 - 2, sy + r + 1.5, tw + 4, 9.5);
+        ctx.fillStyle = isSelected ? '#fbbf24' : '#e2e8f0';
+        ctx.fillText(p.shortLabel, sx, sy + r + 6.5);
+      }
+    }
+    phoneMapTargetsRef.current = targets;
+
+    // Active Waypoint Marker (or edge directional indicator if offscreen)
+    if (waypoint?.active) {
+      const [wxRaw, wyRaw] = toCanvas(waypoint.x, waypoint.z);
+      const margin = 12;
+      const off = wxRaw < margin || wxRaw > w - margin || wyRaw < margin || wyRaw > h - margin;
+      const dx = wxRaw - cx;
+      const dy = wyRaw - cy;
+      const edgeScale = off
+        ? Math.min((cx - margin) / Math.max(Math.abs(dx), 1), (cy - margin) / Math.max(Math.abs(dy), 1))
+        : 1;
+      const wx = off ? cx + dx * edgeScale : wxRaw;
+      const wy = off ? cy + dy * edgeScale : wyRaw;
+
+      ctx.save();
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(wx, wy, 9, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.fillStyle = '#fbbf24';
+      ctx.strokeStyle = '#0b0e14';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(wx, wy, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      if (off) {
+        ctx.translate(wx, wy);
+        ctx.rotate(Math.atan2(dy, dx));
+        ctx.fillStyle = '#38bdf8';
+        ctx.beginPath();
+        ctx.moveTo(12, 0);
+        ctx.lineTo(6, -4);
+        ctx.lineTo(6, 4);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // Player / Vehicle directional arrow
+    const [px, py] = toCanvas(playerX, playerZ);
+    ctx.save();
+    ctx.translate(px, py);
+    if (!mapFollowCar) {
+      ctx.rotate(-playerYaw);
+    }
+    ctx.fillStyle = inVehicle ? 'rgba(56, 189, 248, 0.22)' : 'rgba(245, 158, 11, 0.18)';
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(-12, -26);
+    ctx.lineTo(12, -26);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = inVehicle ? '#38bdf8' : '#fbbf24';
+    ctx.strokeStyle = '#0b0e14';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(0, -8.5);
+    ctx.lineTo(6, 6);
+    ctx.lineTo(0, 3);
+    ctx.lineTo(-6, 6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+
+    // North Compass Badge
+    ctx.save();
+    if (mapFollowCar) {
+      const nx = w - 16 + Math.sin(playerYaw) * 7;
+      const ny = 16 - Math.cos(playerYaw) * 7;
+      ctx.fillStyle = 'rgba(11, 14, 20, 0.9)';
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(nx, ny, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#fca5a5';
+      ctx.font = 'bold 7.5px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('N', nx, ny + 0.5);
+    } else {
+      ctx.fillStyle = 'rgba(11, 14, 20, 0.85)';
+      ctx.fillRect(w - 24, 5, 18, 13);
+      ctx.fillStyle = '#fbbf24';
+      ctx.font = 'bold 8px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('N', w - 15, 11.5);
+    }
+    ctx.restore();
+  }, [
+    minimized,
+    app,
+    mapZoom,
+    mapPan,
+    mapFollowCar,
+    playerX,
+    playerZ,
+    playerYaw,
+    inVehicle,
+    wantedLevel,
+    blips,
+    waypoint,
+    houseName,
+    homePos.x,
+    homePos.z,
+  ]);
 
   const connectCallNow = (contact: ContactEntry, direction: 'INCOMING' | 'OUTGOING') => {
     clearCallTimers();
@@ -1327,7 +1750,11 @@ export const InGamePhone: React.FC<InGamePhoneProps> = ({
               <div className="grid grid-cols-4 gap-1.5 pt-1">
                 <button
                   type="button"
-                  onClick={onOpenMap}
+                  onClick={() => {
+                    setMapPan({ x: playerX, z: playerZ });
+                    setMapFollowCar(inVehicle);
+                    setApp('map');
+                  }}
                   className="flex flex-col items-center gap-0.5 py-2 rounded-xl bg-white/[0.05] hover:bg-white/[0.12] border border-white/10 text-[9px] text-sky-300 cursor-pointer"
                 >
                   <MapIcon className="w-3.5 h-3.5" />
@@ -2095,20 +2522,33 @@ export const InGamePhone: React.FC<InGamePhoneProps> = ({
                 </div>
               </div>
 
-              {/* Quick GPS Destinations */}
-              <div className="flex items-center justify-between">
+              {/* Quick GPS Destinations + Direct Open Interactive Phone Map */}
+              <div className="flex items-center justify-between gap-1">
                 <span className="text-[11px] font-display font-bold text-sky-300">
                   Set GPS Destination
                 </span>
-                {waypoint?.active && (
+                <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={onClearWaypoint}
-                    className="text-[10px] font-mono-num text-red-300 cursor-pointer"
+                    onClick={() => {
+                      setMapPan({ x: playerX, z: playerZ });
+                      setMapFollowCar(inVehicle);
+                      setApp('map');
+                    }}
+                    className="px-2 py-0.5 rounded-full bg-sky-500/20 border border-sky-400/50 text-[9.5px] font-mono-num font-bold text-sky-200 cursor-pointer"
                   >
-                    Clear GPS
+                    Map View
                   </button>
-                )}
+                  {waypoint?.active && (
+                    <button
+                      type="button"
+                      onClick={onClearWaypoint}
+                      className="text-[10px] font-mono-num text-red-300 cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="flex flex-col gap-1">
@@ -2132,9 +2572,226 @@ export const InGamePhone: React.FC<InGamePhoneProps> = ({
                     }`}
                   >
                     <span className="truncate">{loc.label}</span>
-                    <span className="text-[9px] font-mono-num text-sky-300 ml-2 shrink-0">GO</span>
+                    <span className="text-[9px] font-mono-num text-sky-300 ml-2 shrink-0">
+                      {Math.round(Math.hypot(loc.x - playerX, loc.z - playerZ))}m
+                    </span>
                   </button>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {app === 'map' && (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-1">
+                <span className="text-xs font-display font-bold text-[#FBBF24] flex items-center gap-1">
+                  <MapIcon className="w-3.5 h-3.5" /> BHARAT MAPS
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={onOpenMap}
+                    className="flex items-center gap-1 px-2 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/35 border border-sky-400/50 text-[9.5px] font-mono-num font-bold text-sky-200 cursor-pointer"
+                    title="Open Fullscreen Tactical Map"
+                  >
+                    <Maximize2 className="w-2.5 h-2.5" />
+                    <span>FULL</span>
+                  </button>
+                  {waypoint?.active && (
+                    <button
+                      type="button"
+                      onClick={onClearWaypoint}
+                      className="px-2 py-1 rounded-lg bg-red-500/20 border border-red-400/50 text-[9.5px] font-mono-num font-bold text-red-200 cursor-pointer"
+                    >
+                      OFF
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Phone Interactive Map Toolbar */}
+              <div className="flex items-center justify-between gap-1 text-[9.5px] font-mono-num">
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setMapZoom((z) => Math.min(3.2, Number((z * 1.22).toFixed(2))))}
+                    aria-label="Zoom In"
+                    className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-slate-100 cursor-pointer"
+                  >
+                    <ZoomIn className="w-3 h-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMapZoom((z) => Math.max(0.7, Number((z * 0.82).toFixed(2))))}
+                    aria-label="Zoom Out"
+                    className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-slate-100 cursor-pointer"
+                  >
+                    <ZoomOut className="w-3 h-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMapFollowCar((f) => !f)}
+                    className={`flex items-center gap-0.5 px-1.5 py-1 rounded-lg border cursor-pointer ${
+                      mapFollowCar
+                        ? 'bg-amber-500/25 border-amber-400 text-amber-200 font-bold'
+                        : 'bg-white/5 border-white/15 text-slate-300'
+                    }`}
+                  >
+                    <Navigation className="w-2.5 h-2.5" />
+                    <span>{mapFollowCar ? 'TURN' : 'NORTH'}</span>
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMapPan({ x: playerX, z: playerZ });
+                    setMapZoom(1.4);
+                  }}
+                  className="flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-500/20 border border-amber-400/50 text-amber-200 font-bold cursor-pointer"
+                >
+                  <Crosshair className="w-2.5 h-2.5" />
+                  <span>MY POS</span>
+                </button>
+              </div>
+
+              {/* Interactive Canvas Map right inside Phone Screen */}
+              <canvas
+                ref={phoneMapCanvasRef}
+                width={260}
+                height={220}
+                style={{ touchAction: 'none' }}
+                onPointerDown={(e) => {
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  phoneMapDragRef.current = {
+                    active: true,
+                    pointerId: e.pointerId,
+                    lastX: e.clientX,
+                    lastY: e.clientY,
+                    movedPx: 0,
+                  };
+                }}
+                onPointerMove={(e) => {
+                  if (!phoneMapDragRef.current.active || phoneMapDragRef.current.pointerId !== e.pointerId) return;
+                  const canvas = phoneMapCanvasRef.current;
+                  if (!canvas) return;
+                  const rect = canvas.getBoundingClientRect();
+                  const dxPx = ((e.clientX - phoneMapDragRef.current.lastX) / rect.width) * canvas.width;
+                  const dyPx = ((e.clientY - phoneMapDragRef.current.lastY) / rect.height) * canvas.height;
+                  phoneMapDragRef.current.movedPx += Math.hypot(
+                    e.clientX - phoneMapDragRef.current.lastX,
+                    e.clientY - phoneMapDragRef.current.lastY,
+                  );
+                  phoneMapDragRef.current.lastX = e.clientX;
+                  phoneMapDragRef.current.lastY = e.clientY;
+                  if (phoneMapDragRef.current.movedPx > 4 && mapFollowCar) {
+                    setMapFollowCar(false);
+                  }
+                  const scale = ((canvas.width - 16) / 560) * mapZoom;
+                  const rot = mapFollowCar ? playerYaw : 0;
+                  const cosR = Math.cos(-rot);
+                  const sinR = Math.sin(-rot);
+                  const rx = -dxPx / scale;
+                  const rz = -dyPx / scale;
+                  const dwx = rx * cosR - rz * sinR;
+                  const dwz = rx * sinR + rz * cosR;
+                  setMapPan((prev) => ({
+                    x: Math.max(-310, Math.min(310, prev.x + dwx)),
+                    z: Math.max(-310, Math.min(310, prev.z + dwz)),
+                  }));
+                }}
+                onPointerUp={(e) => {
+                  if (!phoneMapDragRef.current.active || phoneMapDragRef.current.pointerId !== e.pointerId) return;
+                  phoneMapDragRef.current.active = false;
+                  try {
+                    e.currentTarget.releasePointerCapture(e.pointerId);
+                  } catch {
+                    // ignore
+                  }
+                  if (phoneMapDragRef.current.movedPx <= 7) {
+                    const canvas = phoneMapCanvasRef.current;
+                    if (!canvas) return;
+                    const rect = canvas.getBoundingClientRect();
+                    const sx = ((e.clientX - rect.left) / rect.width) * canvas.width;
+                    const sy = ((e.clientY - rect.top) / rect.height) * canvas.height;
+                    let bestTarget: (typeof phoneMapTargetsRef.current)[number] | null = null;
+                    let bestD = Infinity;
+                    for (const t of phoneMapTargetsRef.current) {
+                      const d = Math.hypot(sx - t.sx, sy - t.sy);
+                      if (d <= t.hitR && d < bestD) {
+                        bestD = d;
+                        bestTarget = t;
+                      }
+                    }
+                    if (bestTarget) {
+                      onSetWaypoint(bestTarget.wx, bestTarget.wz, bestTarget.label);
+                      return;
+                    }
+                    const cx = canvas.width / 2;
+                    const cy = canvas.height / 2;
+                    const scale = ((canvas.width - 16) / 560) * mapZoom;
+                    const rot = mapFollowCar ? playerYaw : 0;
+                    const cosR = Math.cos(-rot);
+                    const sinR = Math.sin(-rot);
+                    const rx = (sx - cx) / scale;
+                    const rz = (sy - cy) / scale;
+                    const center = mapFollowCar ? { x: playerX, z: playerZ } : mapPan;
+                    const wx = Math.max(-320, Math.min(320, Math.round(center.x + rx * cosR - rz * sinR)));
+                    const wz = Math.max(-320, Math.min(320, Math.round(center.z + rx * sinR + rz * cosR)));
+                    onSetWaypoint(wx, wz, `Pin (${wx}, ${wz})`);
+                  }
+                }}
+                className="w-full h-[185px] rounded-xl border border-slate-700 bg-[#080c14] cursor-crosshair select-none"
+              />
+
+              <div className="text-[9px] font-mono-num text-slate-400 text-center">
+                Tap anywhere on map to change GPS pin · Drag to pan
+              </div>
+
+              {/* Search & Quick Change Location List */}
+              <div className="relative">
+                <Search className="w-3 h-3 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={mapSearch}
+                  onChange={(e) => setMapSearch(e.target.value)}
+                  placeholder="Search destination..."
+                  className="w-full pl-7 pr-2 py-1 rounded-lg bg-black/50 border border-white/15 focus:border-[#F59E0B] outline-none text-[10.5px] text-slate-100"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1 max-h-[145px] overflow-y-auto pr-0.5">
+                {[
+                  {
+                    id: 'home',
+                    label: houseName ? `${houseName} (Home)` : 'Shanti Niwas (Home)',
+                    x: homePos.x,
+                    z: homePos.z,
+                  },
+                  ...CITY_LOCATIONS,
+                ]
+                  .filter((l) => !mapSearch.trim() || l.label.toLowerCase().includes(mapSearch.trim().toLowerCase()))
+                  .map((loc) => (
+                    <button
+                      key={loc.id}
+                      type="button"
+                      onClick={() => {
+                        setMapFollowCar(false);
+                        setMapPan({ x: loc.x, z: loc.z });
+                        setMapZoom((z) => Math.max(1.35, z));
+                        onSetWaypoint(loc.x, loc.z, loc.label);
+                      }}
+                      className={`flex items-center justify-between px-2 py-1.5 rounded-lg border text-left text-[10.5px] cursor-pointer ${
+                        waypoint?.label === loc.label
+                          ? 'bg-amber-500/20 border-amber-400/60 text-[#FBBF24] font-semibold'
+                          : 'bg-white/[0.04] hover:bg-white/[0.10] border-white/10 text-slate-200'
+                      }`}
+                    >
+                      <span className="truncate">{loc.label}</span>
+                      <span className="text-[9px] font-mono-num text-sky-300 ml-2 shrink-0">
+                        {Math.round(Math.hypot(loc.x - playerX, loc.z - playerZ))}m
+                      </span>
+                    </button>
+                  ))}
               </div>
             </div>
           )}

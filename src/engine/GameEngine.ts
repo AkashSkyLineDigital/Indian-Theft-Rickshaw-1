@@ -2069,6 +2069,8 @@ export class GameEngine {
     this.mouseDownRight = false;
     this.mouseDragging = false;
     this.pendingUnlockedLeftAttack = false;
+    this.touchAttackHeld = false;
+    this.touchSprint = false;
     this.syncCanvasCursor();
     if (this.weaponWheelOpen) {
       this.weaponWheelOpen = false;
@@ -2113,6 +2115,10 @@ export class GameEngine {
     }
 
     if (code === 'Escape') {
+      if (this.weaponWheelOpen) {
+        this.setWeaponWheelOpen(false);
+        return;
+      }
       // Let Esc unlock pointer if locked, or pause/resume cleanly without breaking JAIL mode
       if ((this.mode === 'PLAYING' || this.mode === 'JAIL') && document.pointerLockElement !== this.renderer.domElement) {
         this.setMode('PAUSED');
@@ -2221,10 +2227,11 @@ export class GameEngine {
     }
 
     if (code === kb.wheel) {
-      if (!this.weaponWheelOpen) {
+      if (!e.repeat && !this.weaponWheelOpen) {
         this.weaponWheelOpen = true;
         this.adsActive = false;
         this.mouseDownLeft = false;
+        this.touchAttackHeld = false;
         this.callbacks.onWeaponWheelChange(true);
       }
       return;
@@ -4076,9 +4083,22 @@ export class GameEngine {
   }
 
   public equipWeapon(id: WeaponId): void {
-    if (!this.ownedWeapons.has(id)) return;
-    if (this.activeWeapon === id) return;
+    if (this.weaponWheelOpen) {
+      this.setWeaponWheelOpen(false);
+    }
+    if (!this.ownedWeapons.has(id)) {
+      this.callbacks.onToast({
+        text: `${WEAPONS[id].shortName} locked — Buy at Pankaj Shastra Bhandar`,
+        tone: 'warn',
+      });
+      return;
+    }
+    if (this.activeWeapon === id) {
+      this.emitHudSnapshot();
+      return;
+    }
     this.activeWeapon = id;
+    this.fireCooldown = Math.min(this.fireCooldown, 0.08);
     if (id === 'fists') {
       this.adsActive = false;
       this.brandishExposeTimer = 0;
@@ -11434,17 +11454,67 @@ export class GameEngine {
       }
       return best;
     };
+
+    // If very close or on same road axis, simplify cleanly
+    const distDirect = Math.hypot(tx - sx, tz - sz);
+    if (distDirect < 22) {
+      return [
+        { x: sx, z: sz },
+        { x: tx, z: tz },
+      ];
+    }
+
     const rSx = snapRoad(sx);
     const rSz = snapRoad(sz);
     const rTx = snapRoad(tx);
     const rTz = snapRoad(tz);
 
     const pts: { x: number; z: number }[] = [{ x: sx, z: sz }];
-    if (Math.hypot(rSx - sx, sz - sz) > 3) pts.push({ x: rSx, z: sz });
-    pts.push({ x: rSx, z: rSz });
-    pts.push({ x: rTx, z: rSz });
-    pts.push({ x: rTx, z: rTz });
-    pts.push({ x: tx, z: tz });
+    const pushUnique = (x: number, z: number) => {
+      const last = pts[pts.length - 1];
+      if (!last || Math.hypot(last.x - x, last.z - z) > 1.5) {
+        pts.push({ x, z });
+      }
+    };
+
+    // Enter the nearest street segment cleanly (avoids cutting across blocks)
+    const entryVert = { x: rSx, z: sz };
+    const entryHoriz = { x: sx, z: rSz };
+    const useVertEntry = Math.abs(rSx - sx) <= Math.abs(rSz - sz);
+    const entryPt = useVertEntry ? entryVert : entryHoriz;
+    pushUnique(entryPt.x, entryPt.z);
+
+    // Choose nearest exit street segment at destination
+    const exitVert = { x: rTx, z: tz };
+    const exitHoriz = { x: tx, z: rTz };
+    const useVertExit = Math.abs(rTx - tx) <= Math.abs(rTz - tz);
+    const exitPt = useVertExit ? exitVert : exitHoriz;
+
+    // Connect along grid roads between entry road and exit road
+    if (useVertEntry && useVertExit) {
+      if (Math.abs(rSx - rTx) < 1) {
+        // Same North-South road
+      } else {
+        const midZ = Math.abs(sz - rSz) <= Math.abs(tz - rTz) ? rSz : rTz;
+        pushUnique(rSx, midZ);
+        pushUnique(rTx, midZ);
+      }
+    } else if (!useVertEntry && !useVertExit) {
+      if (Math.abs(rSz - rTz) < 1) {
+        // Same East-West road
+      } else {
+        const midX = Math.abs(sx - rSx) <= Math.abs(tx - rTx) ? rSx : rTx;
+        pushUnique(midX, rSz);
+        pushUnique(midX, rTz);
+      }
+    } else if (useVertEntry && !useVertExit) {
+      pushUnique(rSx, rTz);
+    } else {
+      pushUnique(rTx, rSz);
+    }
+
+    pushUnique(exitPt.x, exitPt.z);
+    pushUnique(tx, tz);
     return pts;
   }
 
